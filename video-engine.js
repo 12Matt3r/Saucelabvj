@@ -75,11 +75,27 @@ class VideoEngine {
                 phosphorOffset: 0.002,
                 vignetteStrength: 0.2,
                 vignetteSoftness: 0.5
-            }
-            // Add other new effects' controls here as they are implemented
-        };
+                },
+                pixelsort: {
+                    intensity: 0.5,
+                    displacement: 0.02, // Small default, range 0-0.1 or similar
+                    feedback: 0.0,
+                    threshold: 0.5
+                },
+                feedback: {
+                    intensity: 0.5,
+                    displacement: 0.01, // Small warp
+                    feedback: 0.85, // Strong feedback default
+                    feedback_glowThreshold: 0.1 // Specific threshold for glow
+                },
+                feedbackDisplace: {
+                    displacement_map_strength: 0.01, // Subtle default
+                    intensity: 0.5 // Modulator for strength
+                }
+                // Add other new effects' controls here as they are implemented
+            };
 
-        this.texPrevFrame = null; // Texture to hold the output of the previous full frame for feedback effects
+            this.texPrevFrame = null; // Texture to hold the output of the previous full frame for feedback effects
         this.fboPrevFrame = null; // FBO to render into texPrevFrame
     }
 
@@ -204,6 +220,9 @@ class VideoEngine {
                 finalPass: this.shaderManager.getFinalPassFragmentSource(),
                 datamosh: this.shaderManager.getDatamoshFragmentSource(), // Added new Datamosh shader
                 crt: this.shaderManager.getCRTFragmentSource(),           // Added new CRT shader
+                pixelsort: this.shaderManager.getPixelSortFragmentSource(), // Added PixelSort
+                feedback: this.shaderManager.getFeedbackFragmentSource(),   // Added Feedback
+                feedbackDisplace: this.shaderManager.getFeedbackDisplaceFragmentSource(), // Added FeedbackDisplace
             };
 
             for (const effectName in effectShaderSources) {
@@ -712,14 +731,21 @@ class VideoEngine {
             gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteSoftness'), controls.vignetteSoftness);
             // CRT also has 'u_intensity' in its GLSL spec, but it's not used in the provided code.
             // If it were used, it would pick up the global 'u_intensity' from setGlobalUniforms.
+        } else if (effectName === 'pixelsort') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
+        } else if (effectName === 'feedback') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback_glowThreshold'), controls.feedback_glowThreshold);
+        } else if (effectName === 'feedbackDisplace') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement_map_strength'), controls.displacement_map_strength);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            // This effect also uses global u_resolution, set by setGlobalUniforms
         }
-        // Add other new effects from the spec here...
-        // else if (effectName === 'pixelsort') {
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
-        // }
     }
 
     renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {

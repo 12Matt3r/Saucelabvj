@@ -17,6 +17,229 @@ class ShaderManager {
         `;
     }
 
+    getFeedbackDisplaceFragmentSource() {
+        // Specific Uniforms: u_displacement_map_strength, u_intensity (for modulation)
+        // Global Uniforms used: u_resolution (optional in spec, useful)
+        // Textures: u_sourceTexture, u_previousFrameTexture (as displacement map)
+        return `
+            precision highp float;
+            varying vec2 v_texCoord;
+
+            uniform sampler2D u_sourceTexture;          // Current live input
+            uniform sampler2D u_previousFrameTexture;   // Used as displacement map
+
+            uniform float u_displacement_map_strength;
+            uniform vec2 u_resolution; // For pixel-based displacement option
+            uniform float u_intensity;  // To modulate displacement strength
+
+            // Global adjustments that FinalPassShader will handle
+            // uniform float u_brightness;
+            // uniform float u_contrast;
+            // uniform float u_saturation;
+
+            // Helper functions from the spec (if needed, but this shader is simpler)
+            // For this shader, only adjustBrightnessContrast and adjustSaturation were listed with its GLSL,
+            // but they are removed as they are handled by FinalPassShader.
+
+            void main() {
+                // Sample the displacement map (using previous frame's output)
+                vec4 displacementColor = texture2D(u_previousFrameTexture, v_texCoord);
+
+                float actualDisplacementStrength = u_displacement_map_strength * (0.5 + u_intensity * 0.5);
+
+                // Calculate displacement vector from color (typically R and G channels)
+                vec2 displacement = (displacementColor.rg * 2.0 - 1.0) * actualDisplacementStrength;
+
+                // Optional pixel-based displacement (from spec comment)
+                // if (u_resolution.x > 0.0 && u_resolution.y > 0.0) {
+                //     displacement /= u_resolution;
+                // }
+                // For now, using screen-percentage based displacement as per the primary logic.
+
+                // Standard mirroring for current source input before displacement
+                vec2 mirroredSourceTexcoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+                vec2 displacedTexcoord = mirroredSourceTexcoord + displacement;
+
+                vec4 finalColor;
+                // Boundary check after displacement
+                if (displacedTexcoord.x < 0.0 || displacedTexcoord.x > 1.0 ||
+                    displacedTexcoord.y < 0.0 || displacedTexcoord.y > 1.0) {
+                    finalColor = vec4(0.0, 0.0, 0.0, 1.0); // Output black if out of bounds
+                } else {
+                    finalColor = texture2D(u_sourceTexture, displacedTexcoord);
+                }
+
+                // Brightness/Contrast/Saturation handled by FinalPassShader
+
+                gl_FragColor = finalColor;
+            }
+        `;
+    }
+
+    getFeedbackFragmentSource() {
+        // Specific Uniforms: u_intensity, u_displacement, u_feedback, u_feedback_glowThreshold (was u_threshold)
+        // Global Uniforms used: u_time, u_motionThreshold (for glow, distinct from specific threshold), u_hueShiftSpeed
+        // Textures: u_sourceTexture, u_previousFrameTexture
+        return `
+            precision highp float;
+            varying vec2 v_texCoord;
+
+            uniform sampler2D u_sourceTexture;
+            uniform sampler2D u_previousFrameTexture;
+            uniform float u_time;
+            uniform float u_motionThreshold; // Global motion threshold
+            // uniform float u_trailPersistence; // Not used in this shader's logic
+            uniform float u_hueShiftSpeed;
+            // uniform float u_motionExtrapolation; // Not used
+
+            // Effect-specific
+            uniform float u_intensity;
+            uniform float u_displacement;
+            uniform float u_feedback;
+            uniform float u_feedback_glowThreshold; // Renamed from u_threshold to be specific
+
+            // Helper functions from the spec
+            float random (vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123 + u_time * 0.01); }
+            float noise (vec2 st) { vec2 i = floor(st); vec2 f = fract(st); float a = random(i); float b = random(i + vec2(1.,0.)); float c = random(i + vec2(0.,1.)); float d = random(i + vec2(1.,1.)); vec2 u = f*f*(3.0-2.0*f); return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
+            vec3 rgb2hsl(vec3 color) { float r = color.r; float g = color.g; float b = color.b; float maxC = max(max(r, g), b); float minC = min(min(r, g), b); float h = 0.0, s = 0.0, l = (maxC + minC) / 2.0; if (maxC == minC) { h = s = 0.0; } else { float d = maxC - minC; s = l > 0.5 ? d / (2.0 - maxC - minC) : d / (maxC + minC); if (maxC == r) { h = (g - b) / d + (g < b ? 6.0 : 0.0); } else if (maxC == g) { h = (b - r) / d + 2.0; } else if (maxC == b) { h = (r - g) / d + 4.0; } h /= 6.0; } return vec3(h, s, l); }
+            float hue2rgb(float p, float q, float t) { if(t < 0.0) t += 1.0; if(t > 1.0) t -= 1.0; if(t < 1.0/6.0) return p + (q - p) * 6.0 * t; if(t < 1.0/2.0) return q; if(t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0; return p; }
+            vec3 hsl2rgb(vec3 hsl) { float h = hsl.x; float s = hsl.y; float l = hsl.z; float r, g, b; if(s == 0.0){ r = g = b = l; } else { float q = l < 0.5 ? l * (1.0 + s) : l + s - l * s; float p = 2.0 * l - q; r = hue2rgb(p, q, h + 1.0/3.0); g = hue2rgb(p, q, h); b = hue2rgb(p, q, h - 1.0/3.0); } return vec3(r, g, b); }
+
+            void main() {
+                vec2 mirroredTexCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y); // Standard mirroring for current input
+
+                float angle = u_time * 0.05 * u_intensity;
+                float zoom = 1.0 + sin(u_time * 0.1) * 0.01 * u_intensity;
+
+                vec2 center = vec2(0.5, 0.5);
+                vec2 fbCoord = v_texCoord - center; // Feedback texture is sampled with non-mirrored coords
+                fbCoord = vec2(
+                    fbCoord.x * cos(angle) - fbCoord.y * sin(angle),
+                    fbCoord.x * sin(angle) + fbCoord.y * cos(angle)
+                );
+                fbCoord = fbCoord * zoom + center;
+
+                fbCoord += vec2(
+                    noise(fbCoord * 5.0 + u_time * 0.1) - 0.5,
+                    noise(fbCoord * 5.0 - u_time * 0.1) - 0.5
+                ) * u_displacement * 0.1;
+
+                vec4 currentSourceColor = texture2D(u_sourceTexture, mirroredTexCoord);
+                vec4 feedbackColorSample = texture2D(u_previousFrameTexture, fbCoord);
+
+                float feedbackAmount = clamp(u_feedback * (1.0 + u_intensity), 0.0, 0.95); // Max feedback 0.95 to avoid full lock
+                vec4 finalColor = mix(currentSourceColor, feedbackColorSample, feedbackAmount);
+
+                // Motion-reactive glow uses u_motionThreshold (global) or a specific u_feedback_glowThreshold
+                // The spec says "threshold: The motion detection threshold for the glow effect."
+                // Let's use u_feedback_glowThreshold if provided, otherwise global u_motionThreshold.
+                // For this implementation, I defined u_feedback_glowThreshold.
+                float difference = length(currentSourceColor.rgb - feedbackColorSample.rgb);
+                if (difference > u_feedback_glowThreshold) { // Using specific threshold for glow
+                    vec3 hsl = rgb2hsl(finalColor.rgb);
+                    hsl.y = min(hsl.y + 0.2 * u_intensity, 1.0);
+                    hsl.z = min(hsl.z + 0.1 * u_intensity, 0.9);
+                    finalColor.rgb = hsl2rgb(hsl);
+                }
+
+                if (u_hueShiftSpeed != 0.0) {
+                    vec3 hsl = rgb2hsl(finalColor.rgb);
+                    hsl.x = fract(hsl.x + u_time * u_hueShiftSpeed);
+                    finalColor.rgb = hsl2rgb(hsl);
+                }
+
+                // Brightness/Contrast/Saturation handled by FinalPassShader
+
+                finalColor = clamp(finalColor, 0.0, 1.0);
+                gl_FragColor = finalColor;
+            }
+        `;
+    }
+
+    getPixelSortFragmentSource() {
+        // Specific Uniforms: u_intensity, u_displacement, u_feedback, u_threshold
+        // Global Uniforms used: u_time, u_trailPersistence, u_hueShiftSpeed
+        // (u_brightness, u_contrast, u_saturation are for FinalPassShader)
+        // Textures: u_sourceTexture, u_previousFrameTexture
+        return `
+            precision highp float;
+            varying vec2 v_texCoord;
+
+            uniform sampler2D u_sourceTexture;
+            uniform sampler2D u_previousFrameTexture;
+            uniform float u_time;
+            // uniform float u_motionThreshold; // Not used in provided GLSL logic for PixelSort
+            uniform float u_trailPersistence;
+            uniform float u_hueShiftSpeed;
+            // uniform float u_motionExtrapolation; // Not used
+
+            // Effect-specific
+            uniform float u_intensity;
+            uniform float u_displacement;
+            uniform float u_feedback;
+            uniform float u_threshold;
+
+            // Global adjustments that FinalPassShader will handle
+            // uniform float u_brightness;
+            // uniform float u_contrast;
+            // uniform float u_saturation;
+
+            // Helper functions from the spec
+            float random (vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123 + u_time * 0.01); }
+            float noise (vec2 st) { vec2 i = floor(st); vec2 f = fract(st); float a = random(i); float b = random(i + vec2(1.,0.)); float c = random(i + vec2(0.,1.)); float d = random(i + vec2(1.,1.)); vec2 u = f*f*(3.0-2.0*f); return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
+            vec3 rgb2hsl(vec3 color) { float r = color.r; float g = color.g; float b = color.b; float maxC = max(max(r, g), b); float minC = min(min(r, g), b); float h = 0.0, s = 0.0, l = (maxC + minC) / 2.0; if (maxC == minC) { h = s = 0.0; } else { float d = maxC - minC; s = l > 0.5 ? d / (2.0 - maxC - minC) : d / (maxC + minC); if (maxC == r) { h = (g - b) / d + (g < b ? 6.0 : 0.0); } else if (maxC == g) { h = (b - r) / d + 2.0; } else if (maxC == b) { h = (r - g) / d + 4.0; } h /= 6.0; } return vec3(h, s, l); }
+            float hue2rgb(float p, float q, float t) { if(t < 0.0) t += 1.0; if(t > 1.0) t -= 1.0; if(t < 1.0/6.0) return p + (q - p) * 6.0 * t; if(t < 1.0/2.0) return q; if(t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0; return p; }
+            vec3 hsl2rgb(vec3 hsl) { float h = hsl.x; float s = hsl.y; float l = hsl.z; float r, g, b; if(s == 0.0){ r = g = b = l; } else { float q = l < 0.5 ? l * (1.0 + s) : l + s - l * s; float p = 2.0 * l - q; r = hue2rgb(p, q, h + 1.0/3.0); g = hue2rgb(p, q, h); b = hue2rgb(p, q, h - 1.0/3.0); } return vec3(r, g, b); }
+
+            // adjustBrightnessContrast and adjustSaturation removed as they are handled by FinalPassShader
+
+            void main() {
+                // Standard mirroring (as in other new spec shaders)
+                vec2 mirroredTexCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+                vec4 currentSourceColor = texture2D(u_sourceTexture, mirroredTexCoord);
+                vec4 previousFrameColor = texture2D(u_previousFrameTexture, v_texCoord); // Not mirrored in spec for prev frame
+
+                float brightness = dot(currentSourceColor.rgb, vec3(0.299, 0.587, 0.114));
+
+                vec2 sortDir = vec2(0.0, 1.0); // Sort vertically
+                if (sin(u_time * 0.1) > 0.0) { // Time-based switch for sort direction
+                    sortDir = vec2(1.0, 0.0);
+                }
+
+                float adjustedThreshold = u_threshold * (1.0 + u_intensity * 0.5);
+
+                vec2 sortedCoord = mirroredTexCoord;
+                if (brightness > adjustedThreshold) {
+                    // Displacement calculation in spec seems large, might need tuning.
+                    // Using u_displacement directly here. The '10.0' multiplier from spec might be too much.
+                    sortedCoord += sortDir * u_displacement * (brightness - adjustedThreshold);
+                    sortedCoord = fract(sortedCoord);
+                }
+
+                vec4 sortedColor = texture2D(u_sourceTexture, sortedCoord);
+
+                vec4 finalColor = mix(sortedColor, previousFrameColor, u_trailPersistence);
+
+                if (u_feedback > 0.0) {
+                    vec2 feedbackOffset = vec2(noise(v_texCoord*3.0 + u_time*0.1)-0.5) * 0.01 * u_feedback;
+                    vec4 feedbackColorSample = texture2D(u_previousFrameTexture, v_texCoord + feedbackOffset);
+                    finalColor = mix(finalColor, feedbackColorSample, u_feedback * 0.5);
+                }
+
+                if (u_hueShiftSpeed != 0.0) {
+                    vec3 hsl = rgb2hsl(finalColor.rgb);
+                    hsl.x = fract(hsl.x + u_time * u_hueShiftSpeed);
+                    finalColor.rgb = hsl2rgb(hsl);
+                }
+
+                // Brightness/Contrast/Saturation handled by FinalPassShader
+
+                finalColor = clamp(finalColor, 0.0, 1.0);
+                gl_FragColor = finalColor;
+            }
+        `;
+    }
+
     getCRTFragmentSource() {
         // NOTE: This shader uses u_webcamTexture. It does not use u_previousFrameTexture.
         // Specific Uniforms: u_scanlineIntensity, u_scanlineDensity, u_curvatureAmount,
