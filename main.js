@@ -50,6 +50,11 @@ if (typeof VJMixer === 'undefined') {
             }
             
             this.videoEngine = new window.VideoEngine();
+            this.videoEngine.onPerformanceWarning = (message) => {
+                if (this.uiManager) {
+                    this.uiManager.showNotification(message, 'warning', 4000);
+                }
+            };
             
             try {
                 console.log('Initializing video engine...');
@@ -315,10 +320,11 @@ if (typeof VJMixer === 'undefined') {
         initializeAIFeatures() {
             this.aiFeatures = {
                 autoMix: false,
-                beatMatch: false,
-                colorSync: false,
-                learningMode: true
+                beatMatch: false, // Note: Implementation for beatMatch is missing
+                colorSync: false, // Note: Implementation for colorSync is missing
+                learningMode: true // Note: learningMode is not currently used
             };
+            this.aiLastEffectTime = 0; // For effect cooldown
             
             this.uiManager.showNotification('AI Enhancement features activated', 'success');
         }
@@ -357,14 +363,20 @@ if (typeof VJMixer === 'undefined') {
                     }
                     
                     // Auto effect triggering based on frequency analysis
-                    if (beatData.bassLevel > 0.8) {
-                        const bassEffects = ['glitch', 'rgbShift', 'distort'];
-                        const effect = bassEffects[Math.floor(Math.random() * bassEffects.length)];
+                    const now = performance.now();
+                    const aiEffectCooldown = 1000; // Minimum 1 second between AI effects
+                    if (beatData.bassLevel > 0.8 && (now - this.aiLastEffectTime > aiEffectCooldown)) {
+                        const AIEffects = ['glitch', 'rgbShift', 'distort', 'pixelate', 'zoom', 'strobe'];
+                        const effect = AIEffects[Math.floor(Math.random() * AIEffects.length)];
+
+                        console.log(`AI triggering effect: ${effect}`);
                         this.startEffect(effect);
-                        setTimeout(() => this.stopEffect(effect), 200);
+                        setTimeout(() => this.stopEffect(effect), 200 + Math.random() * 300); // Duration 200-500ms
+
+                        this.aiLastEffectTime = now;
                     }
                 }
-            }, 250);
+            }, 250); // Interval check remains 250ms
         }
         
         stopAIAutoMix() {
@@ -975,8 +987,17 @@ if (typeof VJMixer === 'undefined') {
                 
                 this.storage.save(settings);
                 
-                // Show save indicator
-                this.showSaveIndicator();
+                // Show save indicator - Delegate to UIManager
+                if (this.uiManager) {
+                    this.uiManager.showSaveIndicator();
+                } else {
+                    // Fallback or log if uiManager is not available
+                    const indicator = document.getElementById('save-indicator');
+                    if (indicator) {
+                        indicator.classList.add('visible');
+                        setTimeout(() => indicator.classList.remove('visible'), 1000);
+                    }
+                }
                 
             } catch (error) {
                 console.error('Failed to save settings:', error);
@@ -984,37 +1005,72 @@ if (typeof VJMixer === 'undefined') {
             }
         }
         
-        showSaveIndicator() {
-            const indicator = document.getElementById('save-indicator');
-            if (indicator) {
-                indicator.classList.add('visible');
-                setTimeout(() => indicator.classList.remove('visible'), 1000);
-            }
-        }
+        // showSaveIndicator() {
+        //     // This method's logic would move to UIManager.showSaveIndicator()
+        //     // const indicator = document.getElementById('save-indicator');
+        //     // if (indicator) {
+        //     //     indicator.classList.add('visible');
+        //     //     setTimeout(() => indicator.classList.remove('visible'), 1000);
+        //     // }
+        // }
         
         loadSettings() {
-            const settings = this.storage.load();
-            if (settings) {
-                // Restore BPM
-                if (settings.bpm) {
-                    this.sequencer.setBPM(settings.bpm);
-                    const bpmInput = document.getElementById('bpm-input');
-                    if (bpmInput) {
-                        bpmInput.value = settings.bpm;
+            try {
+                const settings = this.storage.load(); // Attempt to load settings
+                
+                if (settings) {
+                    console.log('Applying loaded settings...');
+                    // It's good practice to also wrap the application of settings in a try-catch
+                    // in case the settings data is valid JSON but has unexpected structure.
+                    try {
+                        // Restore BPM
+                        if (typeof settings.bpm === 'number') {
+                            this.sequencer.setBPM(settings.bpm);
+                            const bpmInput = document.getElementById('bpm-input');
+                            if (bpmInput) {
+                                bpmInput.value = settings.bpm;
+                            }
+                        }
+
+                        // Restore assignments
+                        if (typeof settings.assignments === 'object' && settings.assignments !== null) {
+                            this.assignmentManager.setAssignments(settings.assignments);
+                        }
+
+                        // Restore patterns
+                        if (typeof settings.patterns === 'object' && settings.patterns !== null) {
+                            this.patternManager.setPatterns(settings.patterns);
+                        }
+
+                        // Restore layers (example - assuming layer data needs careful application)
+                        if (Array.isArray(settings.layers)) {
+                            // this.layerManager.loadLayerSettings(settings.layers); // Hypothetical method
+                            console.log('Layer settings found, ensure LayerManager handles this restore.');
+                        }
+
+                        console.log('Settings applied successfully.');
+                        if (this.uiManager) {
+                            this.uiManager.showNotification('Settings loaded successfully.', 'success', 3000);
+                        }
+
+                    } catch (applyError) {
+                        console.error('Error applying loaded settings:', applyError);
+                        if (this.uiManager) {
+                            this.uiManager.showErrorMessage('Failed to apply some settings. Data might be corrupt.');
+                        }
                     }
+                } else {
+                    console.log('No saved settings found or settings were invalid.');
+                    // Optionally notify user if settings were expected but not found/invalid
+                    // if (this.uiManager) {
+                    //     this.uiManager.showNotification('No valid settings found to load.', 'info', 3000);
+                    // }
                 }
-                
-                // Restore assignments
-                if (settings.assignments) {
-                    this.assignmentManager.setAssignments(settings.assignments);
+            } catch (loadError) {
+                console.error('Error loading settings from storage:', loadError);
+                if (this.uiManager) {
+                    this.uiManager.showErrorMessage('Failed to load settings. Storage might be corrupt.');
                 }
-                
-                // Restore patterns
-                if (settings.patterns) {
-                    this.patternManager.setPatterns(settings.patterns);
-                }
-                
-                console.log('Settings loaded');
             }
         }
         
@@ -1059,11 +1115,16 @@ if (typeof VJMixer === 'undefined') {
                 this.videoEngine.setCrossfader(0.5);
             }
             
-            // Visual feedback
-            document.body.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #2d2d2d 100%)';
-            setTimeout(() => {
-                document.body.style.background = '';
-            }, 1000);
+            // Visual feedback - Delegate to UIManager
+            if (this.uiManager) {
+                this.uiManager.showEmergencyVisuals(); // Assumes UIManager handles the timed removal as well
+            } else {
+                // Fallback or log
+                document.body.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #2d2d2d 100%)';
+                setTimeout(() => {
+                    document.body.style.background = '';
+                }, 1000);
+            }
             
             console.log('Enhanced emergency stop activated');
         }
