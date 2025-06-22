@@ -20,8 +20,13 @@ class VideoEngine {
         this.beatDetector = new BeatDetector();
         this.autoSyncEnabled = false;
         this.visualizerEnabled = true;
-        this.frameBuffer = null;
-        this.postProcessingTexture = null;
+        this.frameBuffer = null; // May be deprecated by new FBOs
+        this.postProcessingTexture = null; // May be deprecated by new FBOs
+        this.fboA = null;
+        this.texA = null;
+        this.fboB = null;
+        this.texB = null;
+        this.effectPrograms = {}; // To cache compiled effect programs
         this.qualityMode = 'auto';
         this.adaptiveQuality = 1.0;
         this.lastRenderTime = 0;
@@ -45,6 +50,11 @@ class VideoEngine {
         this.lastAudioUpdate = 0;
         this.audioUpdateInterval = 100; // Update audio analysis 10fps max
         this.onPerformanceWarning = null; // Callback for performance warnings
+    }
+
+    smoothstep(edge0, edge1, x) {
+        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
     }
     
     async init() {
@@ -141,18 +151,98 @@ class VideoEngine {
             
             console.log('Shaders compiled successfully');
             
-            // Create geometry and frame buffer for post-processing
+            // const fragmentShaderSource = this.shaderManager.getEnhancedFragmentShaderSource(); // Old way for uber-shader
+            // this.program = this.shaderManager.createProgram(vertexShaderSource, fragmentShaderSource); // Old uber-shader program
+            // if (!this.program) {
+            //     throw new Error('Failed to create WebGL program (uber-shader)');
+            // }
+
+            // Compile individual effect shaders
+            const effectShaderSources = {
+                passthrough: this.shaderManager.getPassthroughFragmentSource(),
+                rgbShift: this.shaderManager.getRgbShiftFragmentSource(),
+                distort: this.shaderManager.getDistortFragmentSource(),
+                glitch: this.shaderManager.getGlitchFragmentSource(),
+                invert: this.shaderManager.getInvertFragmentSource(),
+                kaleido: this.shaderManager.getKaleidoFragmentSource(),
+                pixelate: this.shaderManager.getPixelateFragmentSource(),
+                mirror: this.shaderManager.getMirrorFragmentSource(),
+                color: this.shaderManager.getColorFragmentSource(),      // Renamed from colorCycle
+                zoom: this.shaderManager.getZoomFragmentSource(),        // Renamed from zoomPulse
+                strobe: this.shaderManager.getStrobeFragmentSource(),
+            };
+
+            for (const effectName in effectShaderSources) {
+                if (effectShaderSources.hasOwnProperty(effectName)) {
+                    const fsSource = effectShaderSources[effectName];
+                    const program = this.shaderManager.createProgram(vertexShaderSource, fsSource);
+                    if (!program) {
+                        throw new Error(`Failed to create program for effect: ${effectName}`);
+                    }
+                    this.effectPrograms[effectName] = program;
+                }
+            }
+
+            // Ensure a default program exists if needed (e.g. passthrough might be the main one now)
+            this.program = this.effectPrograms.passthrough; // Set a default program for geometry setup, etc.
+
+
+            console.log('Individual effect shaders compiled successfully.');
+
+            // Create geometry (used by all programs)
             this.createGeometry();
-            this.createFrameBuffer();
+
+            // Create ping-pong framebuffers for multi-pass rendering
+            const { fbo: fboA, texture: texA } = this._createFboAndTexture(this.canvas.width, this.canvas.height);
+            this.fboA = fboA;
+            this.texA = texA;
+            const { fbo: fboB, texture: texB } = this._createFboAndTexture(this.canvas.width, this.canvas.height);
+            this.fboB = fboB;
+            this.texB = texB;
             
+            console.log('Shaders and FBOs initialized for multi-pass rendering.');
+
         } catch (error) {
-            console.error('Shader compilation failed:', error);
-            throw new Error('Failed to compile shaders. Check console for details.');
+            console.error('Shader or FBO initialization failed:', error);
+            // Ensure this error is specific enough or rethrow if main.js handles it.
+            throw new Error(`Shader/FBO Init: ${error.message}`);
         }
     }
     
-    // Removed getEnhancedFragmentShaderSource() method from here. It's now in ShaderManager.
+    _createFboAndTexture(width, height) {
+        const gl = this.gl;
+        const fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            console.error('FBO status incomplete: ' + status.toString() + ` for FBO for texture of size ${width}x${height}`);
+            // Consider throwing an error here or returning nulls
+            gl.deleteTexture(texture);
+            gl.deleteFramebuffer(fbo);
+            throw new Error('Framebuffer incomplete: ' + status.toString());
+        }
+
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return { fbo, texture };
+    }
     
+    // Removed getEnhancedFragmentShaderSource() method from here. It's now in ShaderManager.
+
+    // Old createFrameBuffer is replaced by _createFboAndTexture and specific FBO setup.
+    // Commenting out the old one to avoid confusion.
+    /*
     createFrameBuffer() {
         try {
             this.frameBuffer = this.gl.createFramebuffer();
@@ -172,6 +262,7 @@ class VideoEngine {
             console.warn('Failed to create frame buffer for post-processing:', error);
         }
     }
+    */
     
     createGeometry() {
         try {
@@ -262,21 +353,21 @@ class VideoEngine {
         this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGB, this.gl.RGB, this.gl.UNSIGNED_BYTE, video);
     }
     
-    getEffectNumber(effectName) {
-        const effects = {
-            'rgbShift': 1,
-            'distort': 2,
-            'invert': 3,
-            'glitch': 4,
-            'kaleido': 5,
-            'pixelate': 6,
-            'mirror': 7,
-            'color': 8,
-            'zoom': 9,
-            'strobe': 10
-        };
-        return effects[effectName] || 0;
-    }
+    // getEffectNumber(effectName) { // Obsolete with multi-pass rendering
+    //     const effects = {
+    //         'rgbShift': 1,
+    //         'distort': 2,
+    //         'invert': 3,
+    //         'glitch': 4,
+    //         'kaleido': 5,
+    //         'pixelate': 6,
+    //         'mirror': 7,
+    //         'color': 8,
+    //         'zoom': 9,
+    //         'strobe': 10
+    //     };
+    //     return effects[effectName] || 0;
+    // }
     
     setCrossfader(value) {
         this.crossfader = Math.max(0, Math.min(1, value));
@@ -391,99 +482,307 @@ class VideoEngine {
             beatData = this.audioBuffer?.beatData || this.beatDetector.analyze();
         }
         
-        // Enhanced uniforms with performance consideration
-        this.setUniformsOptimized(time, audioData, beatData);
+        // Enhanced uniforms with performance consideration (will be set per program now)
+        // this.setUniformsOptimized(time, audioData, beatData); // Old way for single program
+
+        // 1. Render Layers to an FBO (e.g., fboA)
+        // This part needs to be carefully designed. For now, assume `renderLayersToFBO`
+        // handles compositing all video layers (with their opacities, blend modes, crossfader)
+        // into this.fboA using their respective video textures and the passthrough shader.
+        // The output in this.texA will be the base image for post-processing effects.
+        // Clearing and viewport setting will be handled by renderBaseSceneToFBO itself.
+        // this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboA); // Done by renderBaseSceneToFBO
+        // this.gl.viewport(0, 0, this.canvas.width, this.canvas.height); // Done by renderBaseSceneToFBO
+        // this.gl.clearColor(0, 0, 0, 1); // Done by renderBaseSceneToFBO
+        // this.gl.clear(this.gl.COLOR_BUFFER_BIT); // Done by renderBaseSceneToFBO
+
+        // The old renderLayersWithBudget drew directly to screen.
+        // It needs to be adapted to draw to the current FBO (this.fboA).
+        // It would use the passthrough shader for each video layer.
+        // For simplicity, let's assume this step populates this.texA correctly.
+        // This is a MAJOR refactor point for renderLayersWithBudget and renderLayerOptimized.
+        // For now, we'll simulate this by just rendering ONE layer if available.
+        this.renderBaseSceneToFBO(this.fboA, budget, audioData, beatData, time);
+
+
+        let currentReadFBO = this.fboA;
+        let currentReadTexture = this.texA;
+        let currentWriteFBO = this.fboB;
+        // let currentWriteTexture = this.texB; // Not directly needed, FBO attachment is key
+
+        const activeEffectNames = Array.from(this.activeEffects);
+
+        if (activeEffectNames.length > 0 && budget.canApplyComplexEffects) {
+            this.gl.disable(this.gl.BLEND); // Usually no blending between full-screen effect passes
+
+            for (let i = 0; i < activeEffectNames.length; i++) {
+                const effectName = activeEffectNames[i];
+                const effectProgram = this.effectPrograms[effectName];
+
+                if (!effectProgram) {
+                    console.warn(`Effect program for ${effectName} not found. Skipping.`);
+                    continue;
+                }
+
+                this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, currentWriteFBO);
+                this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+                // Do not clear here, we are processing the image from the previous pass.
+
+                this.gl.useProgram(effectProgram);
+                this.setGlobalUniforms(effectProgram, time, audioData, beatData); // Helper to set common uniforms
+                // Set effect-specific uniforms if any (not currently the case for these effects)
+
+                this.gl.activeTexture(this.gl.TEXTURE0);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture);
+                const texLoc = this.gl.getUniformLocation(effectProgram, 'u_texture');
+                this.gl.uniform1i(texLoc, 0);
+
+                // Opacity for effect passes is typically 1.0, final opacity handled at the end.
+                const opacityLoc = this.gl.getUniformLocation(effectProgram, 'u_opacity');
+                if(opacityLoc) this.gl.uniform1f(opacityLoc, 1.0);
+
+
+                this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4); // Draw full-screen quad
+
+                // Ping-pong FBOs
+                let tempFBO = currentReadFBO;
+                currentReadFBO = currentWriteFBO;
+                currentWriteFBO = tempFBO;
+
+                let tempTex = currentReadTexture;
+                currentReadTexture = (currentReadFBO === this.fboA) ? this.texA : this.texB;
+                // currentWriteTexture = (currentWriteFBO === this.fboA) ? this.texA : this.texB;
+            }
+            this.gl.enable(this.gl.BLEND); // Re-enable blend for final composite if needed
+        } else {
+            // No effects, or budget doesn't allow: currentReadTexture is still the base scene from fboA.
+        }
+
+        // 2. Render the result (currentReadTexture) to the screen (canvas)
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null); // Bind default framebuffer (screen)
+        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        this.gl.clearColor(0, 0, 0, 1); // Clear screen
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+
+        const finalPassProgram = this.effectPrograms.passthrough; // Use passthrough to draw final texture
+        this.gl.useProgram(finalPassProgram);
+        this.setGlobalUniforms(finalPassProgram, time, audioData, beatData);
         
-        // Render layers with budget constraints
-        this.renderLayersWithBudget(budget, beatData, audioData, time);
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture);
+        const texLoc = this.gl.getUniformLocation(finalPassProgram, 'u_texture');
+        this.gl.uniform1i(texLoc, 0);
+
+        // Apply master opacity in the final pass
+        const opacityLoc = this.gl.getUniformLocation(finalPassProgram, 'u_opacity');
+        if(opacityLoc) this.gl.uniform1f(opacityLoc, this.masterOpacity); // Apply master opacity here
+
+        // Ensure correct blending for final output to canvas
+        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+
+
+        this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         
         this.gl.disable(this.gl.BLEND);
         
-        // Render to output if available and budget allows
+        // Render to output window if available
         if (this.outputGl && this.outputCanvas && budget.canRenderAllLayers) {
-            this.renderToCanvas(this.outputGl, this.outputCanvas);
+            // Similar logic to render currentReadTexture to outputCanvas
+            this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalPassProgram, time, audioData, beatData);
         }
     }
-    
-    setUniformsOptimized(time, audioData, beatData) {
-        // Batch uniform updates for better performance
-        const uniforms = {
-            'u_time': time,
-            'u_crossfader': this.crossfader,
-            'u_resolution': [this.canvas.width, this.canvas.height],
-            'u_beat': beatData.beat,
-            'u_bassLevel': beatData.bassLevel,
-            'u_trebleLevel': beatData.trebleLevel,
-            'u_audioEnergy': audioData.energy,
-            'u_audioFrequencies': [audioData.bass, audioData.mid, audioData.treble]
-        };
+
+    // Helper to set global uniforms for a given program
+    setGlobalUniforms(program, time, audioData, beatData) {
+        const gl = this.gl;
+        gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
+        gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), this.canvas.width, this.canvas.height);
+        if (audioData && beatData) {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_beat'), beatData.beat);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_bassLevel'), beatData.bassLevel);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_trebleLevel'), beatData.trebleLevel);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_audioEnergy'), audioData.energy);
+            gl.uniform3f(gl.getUniformLocation(program, 'u_audioFrequencies'), audioData.bass, audioData.mid, audioData.treble);
+        }
+        // Note: u_crossfader is not a global uniform for effect passes anymore.
+        // u_opacity is handled per-pass (1.0 for effect passes, masterOpacity for final pass)
+    }
+
+    renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
+        // This is a simplified placeholder for rendering the composited video layers.
+        // The full logic from renderLayersWithBudget needs to be adapted here.
+        // It should iterate through active layers, apply their individual opacities,
+        // blend modes, and crossfader contributions, rendering each to targetFbo.
+        // Each layer would use its own video texture and the 'passthrough' shader.
+
+        // Simplified: Render the first active, visible layer using passthrough
+        const gl = this.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
+        // Viewport and clear are assumed to be done by caller for the FBO
+
+        const firstActiveLayer = this.layers.find(l => l.video && l.opacity > 0.01 && l.video.readyState >= l.video.HAVE_CURRENT_DATA);
+
+        if (firstActiveLayer) {
+            if (!firstActiveLayer.texture) this.updateLayerTexture(firstActiveLayer); // Ensure texture exists
+            if (!firstActiveLayer.texture) return; // Still no texture
+
+            const passthroughProgram = this.effectPrograms.passthrough;
+            gl.useProgram(passthroughProgram);
+            this.setGlobalUniforms(passthroughProgram, time, audioData, beatData);
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, firstActiveLayer.texture);
+            gl.uniform1i(gl.getUniformLocation(passthroughProgram, 'u_texture'), 0);
+
+            // Here, we'd need to calculate the layer's effective opacity after crossfader, etc.
+            // For this placeholder, just use its direct opacity.
+            let effectiveOpacity = firstActiveLayer.opacity;
+            // This does not include crossfader or master opacity yet.
+            // Crossfader logic would need to be applied if rendering multiple base layers.
+            // Master opacity is applied in the final screen draw.
+
+            gl.uniform1f(gl.getUniformLocation(passthroughProgram, 'u_opacity'), effectiveOpacity);
+
+            // For a single layer being drawn to FBO, blend mode might be less critical
+            // if the FBO was cleared, but if multiple layers are drawn to the same FBO,
+            // then their blend modes and opacities matter.
+            this.setBlendMode(gl, firstActiveLayer.blendMode); // or just SRC_ALPHA, ONE_MINUS_SRC_ALPHA
+            gl.enable(gl.BLEND);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.disable(gl.BLEND);
+        }
+        // IMPORTANT: This placeholder does NOT correctly composite multiple layers
+        // with crossfader and individual blend modes. That's a major piece of work
+        // to refactor from the old renderLayersWithBudget.
+        // --- END OF PLACEHOLDER ---
+    }
+
+    calculateBaseLayerOpacity(layer, layerIndex, audioData, beatData, time) {
+        let effectiveOpacity = layer.opacity; // Layer's own opacity slider
+        let crossfaderValue = this.crossfader; // Global crossfader (0 for A, 1 for B)
+
+        // Auto-sync crossfader (optional, based on beat)
+        if (this.autoSyncEnabled && beatData && beatData.beat > 0.8 && audioData) {
+            crossfaderValue = Math.abs(Math.sin(time * 0.5 + audioData.energy));
+        }
+
+        const crossfaderSmooth = this.smoothstep(0, 1, crossfaderValue);
+
+        // Layers 0,1,2 are Group A; Layers 3,4,5 are Group B
+        if (layerIndex < 3) { // Group A
+            effectiveOpacity *= Math.pow(1.0 - crossfaderSmooth, 1.5); // Fade out as crossfader moves to B
+        } else { // Group B
+            effectiveOpacity *= Math.pow(crossfaderSmooth, 1.5);       // Fade in as crossfader moves to B
+        }
         
-        Object.entries(uniforms).forEach(([name, value]) => {
-            this.setUniform(this.gl, name, value);
-        });
+        // Audio-reactive opacity boost (applied before global effects and master opacity)
+        if (audioData && audioData.energy > 0.6) {
+            effectiveOpacity = Math.min(1.0, effectiveOpacity * (1.0 + audioData.energy * 0.3));
+        }
+
+        return Math.max(0, Math.min(1, effectiveOpacity)); // Clamp final opacity
     }
     
-    renderLayersWithBudget(budget, beatData, audioData, time) {
+    // This is the new full implementation for rendering base scene to FBO
+    renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
+        const gl = this.gl;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
+        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        gl.clearColor(0, 0, 0, 0); // Clear with transparent black for proper blending
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        const passthroughProgram = this.effectPrograms.passthrough;
+        if (!passthroughProgram) {
+            console.error("Passthrough program not found for renderBaseSceneToFBO");
+            return;
+        }
+        gl.useProgram(passthroughProgram);
+        this.setGlobalUniforms(passthroughProgram, time, audioData, beatData); // Set time, resolution, audio uniforms
+
         let activeLayerCount = 0;
-        const maxLayers = Math.min(budget.maxActiveLayers, this.layers.length);
-        
-        // Sort layers by opacity for priority rendering
-        const sortedLayers = this.layers
+        const maxLayersToRender = budget.maxActiveLayers || this.layers.length;
+
+
+        // Correct layer sorting for blending: typically draw back-to-front, or by explicit layer index.
+        // For typical alpha blending (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), order matters.
+        // Additive might be order-independent.
+        // For now, we'll iterate based on layer index, assuming layers are stacked 0 on bottom, 5 on top.
+        const layersToProcess = this.layers
             .map((layer, index) => ({ layer, index }))
-            .filter(({ layer }) => layer.video && layer.opacity > 0.01)
-            .sort((a, b) => b.layer.opacity - a.layer.opacity)
-            .slice(0, maxLayers);
-        
-        sortedLayers.forEach(({ layer, index }) => {
-            if (layer.video?.readyState >= layer.video.HAVE_CURRENT_DATA && activeLayerCount < maxLayers) {
-                activeLayerCount++;
-                layer.isActive = true;
-                
-                // Smart texture updating based on budget
-                if (budget.canUpdateAllTextures || activeLayerCount <= 2) {
-                    const updateRate = this.getOptimizedTextureUpdateRate();
-                    if (this.shouldUpdateTexture(layer, updateRate)) {
-                        this.updateLayerTexture(layer);
-                    }
+            .filter(({ layer }) => layer.video && layer.opacity > 0.001 && layer.video.readyState >= layer.video.HAVE_CURRENT_DATA)
+            .slice(0, maxLayersToRender); // Respect budget for active layers
+
+        gl.enable(gl.BLEND);
+
+        layersToProcess.forEach(({ layer, index }) => {
+            activeLayerCount++;
+            layer.isActive = true; // Mark layer as active for this frame
+
+            if (budget.canUpdateAllTextures || activeLayerCount <= 2) { // Or some other heuristic for texture updates
+                const updateRate = this.getOptimizedTextureUpdateRate();
+                if (this.shouldUpdateTexture(layer, updateRate)) {
+                    this.updateLayerTexture(layer);
                 }
-                
-                const effectiveOpacity = this.calculateEffectiveOpacity(layer, index, beatData, audioData, time);
-                
-                if (effectiveOpacity > 0.01) {
-                    this.renderLayerOptimized(layer, effectiveOpacity, index, budget);
-                }
-            } else {
+            }
+
+            if (!layer.texture) {
                 layer.isActive = false;
+                return; // Skip if no texture
+            }
+
+            const baseLayerOpacity = this.calculateBaseLayerOpacity(layer, index, audioData, beatData, time);
+
+            if (baseLayerOpacity <= 0.001) { // Threshold to avoid drawing nearly invisible layers
+                layer.isActive = false;
+                return;
+            }
+
+            this.setBlendMode(gl, layer.blendMode); // Set blend mode for this layer
+
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, layer.texture);
+            gl.uniform1i(gl.getUniformLocation(passthroughProgram, 'u_texture'), 0);
+            gl.uniform1f(gl.getUniformLocation(passthroughProgram, 'u_opacity'), baseLayerOpacity);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        });
+        
+        // Reset isActive for layers not processed (if any were skipped by slice or other conditions)
+        this.layers.forEach((layerObj, idx) => {
+            if (!layersToProcess.find(p => p.index === idx)) {
+                layerObj.isActive = false;
             }
         });
-        
-        // Performance optimization suggestions
-        if (activeLayerCount > 4 && this.fps < 45) {
-            this.suggestPerformanceOptimization();
-        }
+
+        gl.disable(gl.BLEND);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Unbind FBO
     }
+
+
+    // setUniformsOptimized(time, audioData, beatData) { // Obsolete: Replaced by setGlobalUniforms used per program.
+    //     const currentProgram = this.gl.getParameter(this.gl.CURRENT_PROGRAM);
+    //     if (!currentProgram) return;
+    //     const uniforms = {
+    //         'u_time': time,
+    //         'u_crossfader': this.crossfader,
+    //         'u_resolution': [this.canvas.width, this.canvas.height],
+    //         'u_beat': beatData.beat,
+    //         'u_bassLevel': beatData.bassLevel,
+    //         'u_trebleLevel': beatData.trebleLevel,
+    //         'u_audioEnergy': audioData.energy,
+    //         'u_audioFrequencies': [audioData.bass, audioData.mid, audioData.treble]
+    //     };
+    //     Object.entries(uniforms).forEach(([name, value]) => {
+    //         this.setUniform(this.gl, name, value);
+    //     });
+    // }
     
-    renderLayerOptimized(layer, effectiveOpacity, layerIndex, budget) {
-        // Simplified blend mode for performance
-        this.setBlendModeOptimized(layer.blendMode, budget);
-        
-        this.setUniform(this.gl, 'u_opacity', effectiveOpacity);
-        
-        const textureLocation = this.gl.getUniformLocation(this.program, 'u_texture');
-        if (textureLocation) this.gl.uniform1i(textureLocation, 0);
-        
-        // Conditional effect application based on budget
-        const effectNumber = budget.canApplyComplexEffects ? 
-            this.getActiveEffectNumber(layerIndex) : 0;
-        
-        const effectLocation = this.gl.getUniformLocation(this.program, 'u_effect');
-        if (effectLocation) this.gl.uniform1i(effectLocation, effectNumber);
-        
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, layer.texture);
-        
-        this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
-    }
+    // renderLayersWithBudget(budget, beatData, audioData, time) { // Obsolete: Logic moved to renderBaseSceneToFBO and effect loop in renderWithBudget
+    // }
+
+    // renderLayerOptimized(layer, effectiveOpacity, layerIndex, budget) { // Obsolete: Logic moved to renderBaseSceneToFBO
+    // }
     
     setBlendModeOptimized(blendMode, budget) {
         // Use simpler blend modes when performance is constrained
@@ -547,41 +846,41 @@ class VideoEngine {
         this.performanceStats.textureUpdates++;
     }
     
-    calculateEffectiveOpacity(layer, index, beatData, audioData, time) {
-        let effectiveOpacity = layer.opacity;
-        let crossfaderValue = this.crossfader;
-        
-        // Auto-sync crossfader to beat if enabled
-        if (this.autoSyncEnabled && beatData.beat > 0.8) {
-            crossfaderValue = Math.abs(Math.sin(time * 0.5 + audioData.energy));
-        }
-        
-        // Enhanced crossfader curves
-        const crossfaderSmooth = this.smoothstep(0, 1, crossfaderValue);
-        
-        if (index < 3) {
-            effectiveOpacity *= Math.pow(1.0 - crossfaderSmooth, 1.5);
-        } else {
-            effectiveOpacity *= Math.pow(crossfaderSmooth, 1.5);
-        }
-        effectiveOpacity *= this.masterOpacity;
-        
-        // Audio-reactive opacity boost
-        if (audioData.energy > 0.6) {
-            effectiveOpacity = Math.min(1.0, effectiveOpacity * (1.0 + audioData.energy * 0.3));
-        }
-        
-        return effectiveOpacity;
-    }
+    // calculateEffectiveOpacity(layer, index, beatData, audioData, time) { // Obsolete: Replaced by calculateBaseLayerOpacity (which excludes masterOpacity)
+    //     let effectiveOpacity = layer.opacity;
+    //     let crossfaderValue = this.crossfader;
+
+    //     // Auto-sync crossfader to beat if enabled
+    //     if (this.autoSyncEnabled && beatData.beat > 0.8) {
+    //         crossfaderValue = Math.abs(Math.sin(time * 0.5 + audioData.energy));
+    //     }
+
+    //     // Enhanced crossfader curves
+    //     const crossfaderSmooth = this.smoothstep(0, 1, crossfaderValue);
+
+    //     if (index < 3) {
+    //         effectiveOpacity *= Math.pow(1.0 - crossfaderSmooth, 1.5);
+    //     } else {
+    //         effectiveOpacity *= Math.pow(crossfaderSmooth, 1.5);
+    //     }
+    //     effectiveOpacity *= this.masterOpacity; // This was the key difference
+
+    //     // Audio-reactive opacity boost
+    //     if (audioData.energy > 0.6) {
+    //         effectiveOpacity = Math.min(1.0, effectiveOpacity * (1.0 + audioData.energy * 0.3));
+    //     }
+
+    //     return effectiveOpacity;
+    // }
     
-    getActiveEffectNumber(layerIndex) {
-        const activeEffectsArray = Array.from(this.activeEffects);
-        if (activeEffectsArray.length === 0) return 0;
-        
-        // Layer-specific effect cycling
-        const effectIndex = (layerIndex + Math.floor(performance.now() / 2000)) % activeEffectsArray.length;
-        return this.getEffectNumber(activeEffectsArray[effectIndex]);
-    }
+    // getActiveEffectNumber(layerIndex) { // Obsolete with multi-pass rendering
+    //     const activeEffectsArray = Array.from(this.activeEffects);
+    //     if (activeEffectsArray.length === 0) return 0;
+
+    //     // Layer-specific effect cycling
+    //     const effectIndex = (layerIndex + Math.floor(performance.now() / 2000)) % activeEffectsArray.length;
+    //     return this.getEffectNumber(activeEffectsArray[effectIndex]);
+    // }
     
     getOptimizedTextureUpdateRate() {
         const baseRates = {
