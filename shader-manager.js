@@ -212,7 +212,133 @@ class ShaderManager {
             }
         `;
     }
+
+    // === Methods for Single-Effect Shaders (for multi-pass rendering) ===
+
+    _getBaseFragmentPrelude() {
+        return `
+            precision mediump float;
+            uniform sampler2D u_texture; // Input texture from previous pass or base layer
+            uniform float u_opacity;     // Opacity for the final output (usually 1.0 for intermediate)
+            uniform float u_time;
+            uniform vec2 u_resolution;
+            // Audio reactive uniforms
+            uniform float u_beat;
+            uniform float u_bassLevel;
+            uniform float u_trebleLevel;
+            uniform float u_audioEnergy;
+            uniform vec3 u_audioFrequencies;
+            varying vec2 v_texCoord;
+
+            float noise(vec2 co) { // Noise function, used by some effects
+                return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+            }
+        `;
+    }
+
+    _getGlobalEnhancements() {
+        // These were global adjustments in the original uber-shader's main()
+        // For multi-pass, apply these carefully, perhaps only in the final pass
+        // or ensure they are idempotent if applied in each pass.
+        // For now, including them to maintain visual consistency with original.
+        return `
+            if (u_audioEnergy > 0.5) {
+                effectedColor += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
+            }
+            if (u_beat > 0.7) {
+                effectedColor *= (1.0 + u_beat * 0.2);
+            }
+        `;
+    }
+
+    getPassthroughFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            void main() {
+                vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb;
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getRgbShiftFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_rgbShift(vec2 coord, sampler2D tex, float audioEnergy, float beat, vec3 audioFreq) {
+                float intensity = 0.005 + audioEnergy * 0.015;
+                float offset = intensity * (1.0 + beat * 0.5);
+
+                float r = texture2D(tex, coord + vec2(offset, 0.0)).r;
+                float g = texture2D(tex, coord).g;
+                float b = texture2D(tex, coord - vec2(offset, 0.0)).b;
+
+                r += audioFreq.x * 0.2;
+                g += audioFreq.y * 0.2;
+                b += audioFreq.z * 0.2;
+
+                return vec3(r, g, b);
+            }
+
+            void main() {
+                vec3 effectedColor = effect_rgbShift(v_texCoord, u_texture, u_audioEnergy, u_beat, u_audioFrequencies);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getDistortFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_distort(vec2 coord, sampler2D tex, float time, float audioEnergy) {
+                float distortionAmount = 0.03 + audioEnergy * 0.02;
+                vec2 distortedCoord = coord + sin(coord * 15.0 + time * 2.0) * distortionAmount;
+                return texture2D(tex, distortedCoord).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_distort(v_texCoord, u_texture, u_time, u_audioEnergy);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
     
+    getGlitchFragmentSource() {
+        // Extracted and adapted from the original advancedGlitchEffect
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_glitch(vec2 coord, sampler2D tex, float time, float beat, vec3 audioFreq, float audioEnergy, float bassLevel) {
+                vec2 uv = coord;
+                float glitchIntensity = beat * 2.0 + audioEnergy;
+
+                if (audioFreq.x > 0.6) {
+                    uv.x += sin(uv.y * 100.0 + time * 10.0) * 0.02 * glitchIntensity;
+                }
+                if (bassLevel > 0.7) {
+                    uv.y += cos(uv.x * 80.0 + time * 8.0) * 0.015 * bassLevel;
+                }
+
+                float noiseLevel = noise(uv * 800.0 + time) * audioEnergy;
+                vec3 color = texture2D(tex, uv).rgb;
+
+                if (beat > 0.8) {
+                    color.r += sin(time * 40.0 + audioFreq.x * 10.0) * 0.3;
+                    color.g += cos(time * 35.0 + audioFreq.y * 8.0) * 0.2;
+                    color.b += sin(time * 30.0 + audioFreq.z * 12.0) * 0.25;
+                }
+                color += vec3(noiseLevel * 0.1);
+                return color;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_glitch(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_audioEnergy, u_bassLevel);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    // Add other effect shader sources here following the same pattern...
+    // e.g., getInvertFragmentSource, getKaleidoFragmentSource, etc.
+
     getFragmentShaderSource() { // This method seems unused now based on video-engine.js, but I'll leave it.
         return `
             precision mediump float;
