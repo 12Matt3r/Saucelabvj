@@ -576,12 +576,9 @@ class VideoEngine {
                 // Bind textures: u_webcamTexture (current state) and u_previousFrameTexture
                 this.gl.activeTexture(this.gl.TEXTURE0);
                 this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the input from previous pass or base scene
-                const webcamTexLoc = this.gl.getUniformLocation(effectProgram, 'u_webcamTexture'); // Or a generic 'u_sourceTexture'
-                if (webcamTexLoc) this.gl.uniform1i(webcamTexLoc, 0);
-                else { // Fallback for older effects using u_texture
-                    const texLoc = this.gl.getUniformLocation(effectProgram, 'u_texture');
-                    if (texLoc) this.gl.uniform1i(texLoc, 0);
-                }
+                const sourceTexLoc = this.gl.getUniformLocation(effectProgram, 'u_sourceTexture');
+                if (sourceTexLoc) this.gl.uniform1i(sourceTexLoc, 0);
+                // No fallback needed now, all shaders should use u_sourceTexture for main input
 
 
                 if (this.texPrevFrame) { // Check if prevFrame texture is available
@@ -622,8 +619,8 @@ class VideoEngine {
         
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the output of the effect chain
-        const finalTexLoc = this.gl.getUniformLocation(finalProgram, 'u_texture'); // FinalPass uses 'u_texture'
-        this.gl.uniform1i(finalTexLoc, 0);
+        const finalSourceTexLoc = this.gl.getUniformLocation(finalProgram, 'u_sourceTexture');
+        if (finalSourceTexLoc) this.gl.uniform1i(finalSourceTexLoc, 0);
 
         const finalOpacityLoc = this.gl.getUniformLocation(finalProgram, 'u_opacity');
         if(finalOpacityLoc) this.gl.uniform1f(finalOpacityLoc, this.masterOpacity);
@@ -643,9 +640,10 @@ class VideoEngine {
             // Set minimal uniforms for passthrough (tex, opacity 1.0)
             this.gl.activeTexture(this.gl.TEXTURE0);
             this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // The final image
-            this.gl.uniform1i(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_texture'), 0);
+            const passthroughTexLoc = this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_sourceTexture');
+            if (passthroughTexLoc) this.gl.uniform1i(passthroughTexLoc, 0);
             this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
-            // No global uniforms needed here unless passthrough shader uses them (it doesn't after recent changes)
+            // No global uniforms needed here unless passthrough shader uses them
 
             this.gl.disable(this.gl.BLEND); // Draw opaque
             this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
@@ -858,7 +856,8 @@ class VideoEngine {
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, layer.texture);
-            gl.uniform1i(gl.getUniformLocation(passthroughProgram, 'u_texture'), 0);
+            const sourceTexLoc = gl.getUniformLocation(passthroughProgram, 'u_sourceTexture');
+            if (sourceTexLoc) gl.uniform1i(sourceTexLoc, 0);
             gl.uniform1f(gl.getUniformLocation(passthroughProgram, 'u_opacity'), baseLayerOpacity);
 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

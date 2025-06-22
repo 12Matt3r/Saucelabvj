@@ -26,7 +26,7 @@ class ShaderManager {
             precision highp float;
             varying vec2 v_texCoord;
 
-            uniform sampler2D u_webcamTexture;
+            uniform sampler2D u_sourceTexture; // WAS: u_webcamTexture
             uniform float u_time; // Available, though CRT spec doesn't explicitly use it in main logic
 
             // Global adjustments (part of the shader's original spec)
@@ -71,9 +71,9 @@ class ShaderManager {
                     // Chromatic Aberration for phosphor effect
                     vec2 r_offset = vec2(u_phosphorOffset, 0.0);
                     vec2 b_offset = vec2(-u_phosphorOffset, 0.0);
-                    float r_channel = texture2D(u_webcamTexture, distortedUV + r_offset).r;
-                    float g_channel = texture2D(u_webcamTexture, distortedUV).g;
-                    float b_channel = texture2D(u_webcamTexture, distortedUV + b_offset).b;
+                    float r_channel = texture2D(u_sourceTexture, distortedUV + r_offset).r; // WAS: u_webcamTexture
+                    float g_channel = texture2D(u_sourceTexture, distortedUV).g; // WAS: u_webcamTexture
+                    float b_channel = texture2D(u_sourceTexture, distortedUV + b_offset).b; // WAS: u_webcamTexture
                     finalColor = vec4(r_channel, g_channel, b_channel, 1.0);
 
                     // Scanlines
@@ -108,7 +108,7 @@ class ShaderManager {
             precision highp float;
             varying vec2 v_texCoord;
 
-            uniform sampler2D u_webcamTexture; // Current composited scene
+            uniform sampler2D u_sourceTexture; // WAS: u_webcamTexture - Current composited scene
             uniform sampler2D u_previousFrameTexture; // Output of the previous full frame
 
             uniform float u_time;
@@ -142,10 +142,10 @@ class ShaderManager {
                 // For now, assume VideoEngine provides non-mirrored video, so this shader's mirroring is desired.
                 vec2 mirroredTexCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
 
-                vec4 currentWebcamColor = texture2D(u_webcamTexture, mirroredTexCoord);
+                vec4 currentSourceColor = texture2D(u_sourceTexture, mirroredTexCoord); // WAS: u_webcamTexture, currentWebcamColor
                 vec4 previousOrStaticColor = texture2D(u_previousFrameTexture, v_texCoord); // previousFrame is not mirrored in spec
 
-                float difference = length(currentWebcamColor.rgb - previousOrStaticColor.rgb);
+                float difference = length(currentSourceColor.rgb - previousOrStaticColor.rgb);
                 vec4 finalColor; vec4 motionDerivedColor; vec4 staticDerivedColor;
 
                 float displacementAmount = u_displacement * (1.0 + u_intensity * 2.0);
@@ -153,9 +153,9 @@ class ShaderManager {
                 vec2 B_offset = vec2(random(mirroredTexCoord.xy - u_time * 0.1) - 0.5) * displacementAmount;
 
                 motionDerivedColor = vec4(
-                    texture2D(u_webcamTexture, mirroredTexCoord + R_offset).r,
-                    currentWebcamColor.g,
-                    texture2D(u_webcamTexture, mirroredTexCoord + B_offset).b,
+                    texture2D(u_sourceTexture, mirroredTexCoord + R_offset).r, // WAS: u_webcamTexture
+                    currentSourceColor.g, // WAS: currentWebcamColor.g
+                    texture2D(u_sourceTexture, mirroredTexCoord + B_offset).b, // WAS: u_webcamTexture
                     1.0
                 );
 
@@ -164,7 +164,7 @@ class ShaderManager {
 
                 float adjustedTrailPersistence = clamp(u_trailPersistence * (1.0 + u_intensity * 0.5), 0.0, 1.0);
                 // The spec had clamp(..., 0.0, 100.0) which is likely a typo for a mix factor. Assuming 0.0 to 1.0.
-                staticDerivedColor = mix(currentWebcamColor, smearedPreviousOrStatic, adjustedTrailPersistence);
+                staticDerivedColor = mix(currentSourceColor, smearedPreviousOrStatic, adjustedTrailPersistence); // WAS: currentWebcamColor
 
                 if (difference > u_motionThreshold) {
                     finalColor = mix(staticDerivedColor, motionDerivedColor, 0.85 * (1.0 + u_intensity * 0.3));
@@ -216,7 +216,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb; // Start with the input color
+                vec3 effectedColor = texture2D(u_sourceTexture, v_texCoord).rgb; // WAS: u_texture
 
                 // Apply global audio enhancements
                 if (u_audioEnergy > 0.5) {
@@ -456,7 +456,7 @@ class ShaderManager {
     _getBaseFragmentPrelude() {
         return `
             precision mediump float;
-            uniform sampler2D u_texture; // Input texture from previous pass or base layer
+            uniform sampler2D u_sourceTexture; // Standardized name for the main input texture
             uniform float u_opacity;     // Opacity for the final output (usually 1.0 for intermediate)
             uniform float u_time;
             uniform vec2 u_resolution;
@@ -488,7 +488,7 @@ class ShaderManager {
     getPassthroughFragmentSource() {
         return this._getBaseFragmentPrelude() + `
             void main() {
-                vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb;
+                vec3 effectedColor = texture2D(u_sourceTexture, v_texCoord).rgb; // Changed u_texture to u_sourceTexture
                 // Global enhancements removed, will be applied in final pass
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -513,7 +513,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_rgbShift(v_texCoord, u_texture, u_audioEnergy, u_beat, u_audioFrequencies);
+                vec3 effectedColor = effect_rgbShift(v_texCoord, u_sourceTexture, u_audioEnergy, u_beat, u_audioFrequencies); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -529,7 +529,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_distort(v_texCoord, u_texture, u_time, u_audioEnergy);
+                vec3 effectedColor = effect_distort(v_texCoord, u_sourceTexture, u_time, u_audioEnergy); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -547,8 +547,8 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 sourceColor = texture2D(u_texture, v_texCoord).rgb;
-                vec3 effectedColor = effect_color(sourceColor, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies); // Renamed
+                vec3 sourceColor = texture2D(u_sourceTexture, v_texCoord).rgb; // Changed u_texture
+                vec3 effectedColor = effect_color(sourceColor, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies);
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -585,7 +585,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_zoom(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies, u_audioEnergy); // Name was already effect_zoom here, good.
+                vec3 effectedColor = effect_zoom(v_texCoord, u_sourceTexture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies, u_audioEnergy); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -611,7 +611,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_strobe(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies);
+                vec3 effectedColor = effect_strobe(v_texCoord, u_sourceTexture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -645,7 +645,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_glitch(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_audioEnergy, u_bassLevel);
+                vec3 effectedColor = effect_glitch(v_texCoord, u_sourceTexture, u_time, u_beat, u_audioFrequencies, u_audioEnergy, u_bassLevel); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -662,7 +662,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_invert(v_texCoord, u_texture, u_beat, u_audioEnergy);
+                vec3 effectedColor = effect_invert(v_texCoord, u_sourceTexture, u_beat, u_audioEnergy); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -696,7 +696,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_kaleido(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_bassLevel);
+                vec3 effectedColor = effect_kaleido(v_texCoord, u_sourceTexture, u_time, u_beat, u_audioFrequencies, u_bassLevel); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -713,7 +713,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_pixelate(v_texCoord, u_texture, u_beat, u_audioEnergy);
+                vec3 effectedColor = effect_pixelate(v_texCoord, u_sourceTexture, u_beat, u_audioEnergy); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
@@ -729,7 +729,7 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_mirror(v_texCoord, u_texture);
+                vec3 effectedColor = effect_mirror(v_texCoord, u_sourceTexture); // Changed u_texture
                 // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
