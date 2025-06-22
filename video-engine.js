@@ -50,6 +50,37 @@ class VideoEngine {
         this.lastAudioUpdate = 0;
         this.audioUpdateInterval = 100; // Update audio analysis 10fps max
         this.onPerformanceWarning = null; // Callback for performance warnings
+
+        // New global controls from spec
+        this.brightness = 0.0;
+        this.contrast = 1.0;
+        this.saturation = 1.0;
+        this.motionThreshold = 0.12;
+        this.trailPersistence = 0.9;
+        this.hueShiftSpeed = 0.0;
+        this.motionExtrapolation = 0.0;
+        this.intensity = 0.5; // General intensity for effects that use it
+
+        // Effect-specific controls
+        this.effectControls = {
+            datamosh: {
+                intensity: 0.5,
+                displacement: 0.01,
+                feedback: 0.5
+            },
+            crt: {
+                scanlineIntensity: 0.1,
+                scanlineDensity: 250.0,
+                curvatureAmount: 0.03,
+                phosphorOffset: 0.002,
+                vignetteStrength: 0.2,
+                vignetteSoftness: 0.5
+            }
+            // Add other new effects' controls here as they are implemented
+        };
+
+        this.texPrevFrame = null; // Texture to hold the output of the previous full frame for feedback effects
+        this.fboPrevFrame = null; // FBO to render into texPrevFrame
     }
 
     smoothstep(edge0, edge1, x) {
@@ -170,6 +201,9 @@ class VideoEngine {
                 color: this.shaderManager.getColorFragmentSource(),      // Renamed from colorCycle
                 zoom: this.shaderManager.getZoomFragmentSource(),        // Renamed from zoomPulse
                 strobe: this.shaderManager.getStrobeFragmentSource(),
+                finalPass: this.shaderManager.getFinalPassFragmentSource(),
+                datamosh: this.shaderManager.getDatamoshFragmentSource(), // Added new Datamosh shader
+                crt: this.shaderManager.getCRTFragmentSource(),           // Added new CRT shader
             };
 
             for (const effectName in effectShaderSources) {
@@ -199,8 +233,15 @@ class VideoEngine {
             const { fbo: fboB, texture: texB } = this._createFboAndTexture(this.canvas.width, this.canvas.height);
             this.fboB = fboB;
             this.texB = texB;
+
+            // Initialize FBO for storing the previous frame's output (for feedback effects)
+            const { fbo: fboPrev, texture: texPrev } = this._createFboAndTexture(this.canvas.width, this.canvas.height);
+            this.fboPrevFrame = fboPrev;
+            this.texPrevFrame = texPrev;
+            // Initialize texPrevFrame with black or some default content?
+            // For now, it will be empty until the first frame is copied.
             
-            console.log('Shaders and FBOs initialized for multi-pass rendering.');
+            console.log('Shaders and FBOs (including prevFrame FBO) initialized for multi-pass rendering.');
 
         } catch (error) {
             console.error('Shader or FBO initialization failed:', error);
@@ -529,66 +570,91 @@ class VideoEngine {
                 // Do not clear here, we are processing the image from the previous pass.
 
                 this.gl.useProgram(effectProgram);
-                this.setGlobalUniforms(effectProgram, time, audioData, beatData); // Helper to set common uniforms
-                // Set effect-specific uniforms if any (not currently the case for these effects)
+                this.setGlobalUniforms(effectProgram, time, audioData, beatData);
+                this.setEffectSpecificUniforms(effectProgram, effectName); // Set effect-specific uniforms
 
+                // Bind textures: u_webcamTexture (current state) and u_previousFrameTexture
                 this.gl.activeTexture(this.gl.TEXTURE0);
-                this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture);
-                const texLoc = this.gl.getUniformLocation(effectProgram, 'u_texture');
-                this.gl.uniform1i(texLoc, 0);
+                this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the input from previous pass or base scene
+                const webcamTexLoc = this.gl.getUniformLocation(effectProgram, 'u_webcamTexture'); // Or a generic 'u_sourceTexture'
+                if (webcamTexLoc) this.gl.uniform1i(webcamTexLoc, 0);
+                else { // Fallback for older effects using u_texture
+                    const texLoc = this.gl.getUniformLocation(effectProgram, 'u_texture');
+                    if (texLoc) this.gl.uniform1i(texLoc, 0);
+                }
 
-                // Opacity for effect passes is typically 1.0, final opacity handled at the end.
+
+                if (this.texPrevFrame) { // Check if prevFrame texture is available
+                    this.gl.activeTexture(this.gl.TEXTURE1);
+                    this.gl.bindTexture(this.gl.TEXTURE_2D, this.texPrevFrame);
+                    const prevFrameTexLoc = this.gl.getUniformLocation(effectProgram, 'u_previousFrameTexture');
+                    if (prevFrameTexLoc) this.gl.uniform1i(prevFrameTexLoc, 1);
+                }
+
                 const opacityLoc = this.gl.getUniformLocation(effectProgram, 'u_opacity');
-                if(opacityLoc) this.gl.uniform1f(opacityLoc, 1.0);
+                if(opacityLoc) this.gl.uniform1f(opacityLoc, 1.0); // Effects render at full opacity internally
 
+                this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
 
-                this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4); // Draw full-screen quad
-
-                // Ping-pong FBOs
-                let tempFBO = currentReadFBO;
-                currentReadFBO = currentWriteFBO;
-                currentWriteFBO = tempFBO;
-
+                // Ping-pong FBOs for next pass
                 let tempTex = currentReadTexture;
-                currentReadTexture = (currentReadFBO === this.fboA) ? this.texA : this.texB;
-                // currentWriteTexture = (currentWriteFBO === this.fboA) ? this.texA : this.texB;
+                currentReadTexture = (currentWriteFBO === this.fboA) ? this.texA : this.texB; // Texture of FBO we just wrote to
+
+                let tempFBO = currentReadFBO; // FBO we read from (becomes next write target)
+                currentReadFBO = currentWriteFBO; // FBO we wrote to (becomes next read source)
+                currentWriteFBO = tempFBO; // Old read FBO is new write target
             }
-            this.gl.enable(this.gl.BLEND); // Re-enable blend for final composite if needed
+            this.gl.enable(this.gl.BLEND);
         } else {
-            // No effects, or budget doesn't allow: currentReadTexture is still the base scene from fboA.
+            // No effects, currentReadTexture is still the base scene from fboA.
         }
 
-        // 2. Render the result (currentReadTexture) to the screen (canvas)
-        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null); // Bind default framebuffer (screen)
+        // 2. Render the result (currentReadTexture) to the FinalPassShader (which might then go to screen or another FBO)
+        // For now, directly to screen using FinalPassShader
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-        this.gl.clearColor(0, 0, 0, 1); // Clear screen
+        this.gl.clearColor(0, 0, 0, 1);
         this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-        const finalPassProgram = this.effectPrograms.passthrough; // Use passthrough to draw final texture
-        this.gl.useProgram(finalPassProgram);
-        this.setGlobalUniforms(finalPassProgram, time, audioData, beatData);
+        const finalProgram = this.effectPrograms.finalPass || this.effectPrograms.passthrough;
+        this.gl.useProgram(finalProgram);
+        this.setGlobalUniforms(finalProgram, time, audioData, beatData);
         
         this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture);
-        const texLoc = this.gl.getUniformLocation(finalPassProgram, 'u_texture');
-        this.gl.uniform1i(texLoc, 0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the output of the effect chain
+        const finalTexLoc = this.gl.getUniformLocation(finalProgram, 'u_texture'); // FinalPass uses 'u_texture'
+        this.gl.uniform1i(finalTexLoc, 0);
 
-        // Apply master opacity in the final pass
-        const opacityLoc = this.gl.getUniformLocation(finalPassProgram, 'u_opacity');
-        if(opacityLoc) this.gl.uniform1f(opacityLoc, this.masterOpacity); // Apply master opacity here
+        const finalOpacityLoc = this.gl.getUniformLocation(finalProgram, 'u_opacity');
+        if(finalOpacityLoc) this.gl.uniform1f(finalOpacityLoc, this.masterOpacity);
 
-        // Ensure correct blending for final output to canvas
+        this.gl.enable(this.gl.BLEND);
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
-
-
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
-        
         this.gl.disable(this.gl.BLEND);
+
+        // 3. Copy the final rendered texture (currentReadTexture) to this.texPrevFrame for the NEXT frame
+        if (this.fboPrevFrame && this.effectPrograms.passthrough) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboPrevFrame);
+            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            // No need to clear if we're overwriting fully with an opaque quad
+
+            this.gl.useProgram(this.effectPrograms.passthrough);
+            // Set minimal uniforms for passthrough (tex, opacity 1.0)
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // The final image
+            this.gl.uniform1i(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_texture'), 0);
+            this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
+            // No global uniforms needed here unless passthrough shader uses them (it doesn't after recent changes)
+
+            this.gl.disable(this.gl.BLEND); // Draw opaque
+            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null); // Unbind
+        }
         
         // Render to output window if available
         if (this.outputGl && this.outputCanvas && budget.canRenderAllLayers) {
-            // Similar logic to render currentReadTexture to outputCanvas
-            this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalPassProgram, time, audioData, beatData);
+            this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalProgram, time, audioData, beatData);
         }
     }
 
@@ -597,6 +663,8 @@ class VideoEngine {
         const gl = this.gl;
         gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
         gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), this.canvas.width, this.canvas.height);
+
+        // Audio uniforms (for old effects and potentially new ones if they use these names)
         if (audioData && beatData) {
             gl.uniform1f(gl.getUniformLocation(program, 'u_beat'), beatData.beat);
             gl.uniform1f(gl.getUniformLocation(program, 'u_bassLevel'), beatData.bassLevel);
@@ -604,8 +672,56 @@ class VideoEngine {
             gl.uniform1f(gl.getUniformLocation(program, 'u_audioEnergy'), audioData.energy);
             gl.uniform3f(gl.getUniformLocation(program, 'u_audioFrequencies'), audioData.bass, audioData.mid, audioData.treble);
         }
-        // Note: u_crossfader is not a global uniform for effect passes anymore.
-        // u_opacity is handled per-pass (1.0 for effect passes, masterOpacity for final pass)
+
+        // New global control uniforms (from the new shader spec)
+        // Shaders must declare these if they use them.
+        gl.uniform1f(gl.getUniformLocation(program, 'u_brightness'), this.brightness);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_contrast'), this.contrast);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_saturation'), this.saturation);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_motionThreshold'), this.motionThreshold);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_trailPersistence'), this.trailPersistence);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_hueShiftSpeed'), this.hueShiftSpeed);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_motionExtrapolation'), this.motionExtrapolation);
+        gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), this.intensity); // General intensity
+
+        // Note: u_crossfader is part of base scene rendering, not a global effect uniform.
+        // u_opacity for effect passes is 1.0, masterOpacity for final pass.
+    }
+
+    setEffectSpecificUniforms(program, effectName) {
+        const gl = this.gl;
+        const controls = this.effectControls[effectName];
+        if (!controls) {
+            // This effect might not have specific controls defined in this.effectControls
+            // or it might be an older effect that doesn't use this structure.
+            return;
+        }
+
+        if (effectName === 'datamosh') {
+            // Note: Datamosh shader uses 'u_intensity' for its own effect strength,
+            // which is different from the global 'u_intensity'.
+            // setGlobalUniforms already sets a global 'u_intensity'.
+            // If an effect shader declares 'u_intensity', this will override the global one for that shader.
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+        } else if (effectName === 'crt') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_scanlineIntensity'), controls.scanlineIntensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_scanlineDensity'), controls.scanlineDensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_curvatureAmount'), controls.curvatureAmount);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_phosphorOffset'), controls.phosphorOffset);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteStrength'), controls.vignetteStrength);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteSoftness'), controls.vignetteSoftness);
+            // CRT also has 'u_intensity' in its GLSL spec, but it's not used in the provided code.
+            // If it were used, it would pick up the global 'u_intensity' from setGlobalUniforms.
+        }
+        // Add other new effects from the spec here...
+        // else if (effectName === 'pixelsort') {
+        //     gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+        //     gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+        //     gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+        //     gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
+        // }
     }
 
     renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
