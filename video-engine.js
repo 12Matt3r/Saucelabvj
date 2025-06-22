@@ -625,8 +625,30 @@ class VideoEngine {
             // No effects, currentReadTexture is still the base scene from fboA.
         }
 
-        // 2. Render the result (currentReadTexture) to the FinalPassShader (which might then go to screen or another FBO)
-        // For now, directly to screen using FinalPassShader
+        // NEW PLACEMENT: 3. Copy the result of the effect chain (currentReadTexture) to this.texPrevFrame
+        // This happens BEFORE FinalPassShader, so texPrevFrame stores the raw effect output.
+        if (this.fboPrevFrame && this.effectPrograms.passthrough && currentReadTexture) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboPrevFrame);
+            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            // No need to clear if we're overwriting fully with an opaque quad
+
+            this.gl.useProgram(this.effectPrograms.passthrough);
+            // Set minimal uniforms for passthrough (tex, opacity 1.0)
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // Output of effect chain
+            const passthroughTexLoc = this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_sourceTexture');
+            if (passthroughTexLoc) this.gl.uniform1i(passthroughTexLoc, 0);
+            this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
+
+            this.gl.disable(this.gl.BLEND); // Draw opaque
+            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+            // Important: Leave this.fboPrevFrame bound if we are immediately going to use its texture.
+            // However, standard practice is to unbind after use. For texPrevFrame, it's now populated.
+            // The next frame will BIND this.texPrevFrame for reading.
+        }
+        // currentReadTexture still holds the output of the effect chain.
+
+        // 2. Render the result (currentReadTexture) to the screen (canvas) using FinalPassShader
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
         this.gl.clearColor(0, 0, 0, 1);
@@ -648,31 +670,16 @@ class VideoEngine {
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         this.gl.disable(this.gl.BLEND);
-
-        // 3. Copy the final rendered texture (currentReadTexture) to this.texPrevFrame for the NEXT frame
-        if (this.fboPrevFrame && this.effectPrograms.passthrough) {
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboPrevFrame);
-            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-            // No need to clear if we're overwriting fully with an opaque quad
-
-            this.gl.useProgram(this.effectPrograms.passthrough);
-            // Set minimal uniforms for passthrough (tex, opacity 1.0)
-            this.gl.activeTexture(this.gl.TEXTURE0);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // The final image
-            const passthroughTexLoc = this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_sourceTexture');
-            if (passthroughTexLoc) this.gl.uniform1i(passthroughTexLoc, 0);
-            this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
-            // No global uniforms needed here unless passthrough shader uses them
-
-            this.gl.disable(this.gl.BLEND); // Draw opaque
-            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null); // Unbind
-        }
         
         // Render to output window if available
+        // The currentReadTexture passed here is the output of the effect chain (pre-FinalPass for main canvas)
+        // If outputCanvas also needs FinalPass applied, it should use finalProgram.
+        // The current call to renderToCanvas already passes finalProgram.
         if (this.outputGl && this.outputCanvas && budget.canRenderAllLayers) {
             this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalProgram, time, audioData, beatData);
         }
+        // Unbind any FBOs at the very end if necessary, though binding to null (screen) does this for FRAMEBUFFER.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     // Helper to set global uniforms for a given program
