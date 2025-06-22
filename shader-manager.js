@@ -17,18 +17,221 @@ class ShaderManager {
         `;
     }
 
+    getCRTFragmentSource() {
+        // NOTE: This shader uses u_webcamTexture. It does not use u_previousFrameTexture.
+        // Specific Uniforms: u_scanlineIntensity, u_scanlineDensity, u_curvatureAmount,
+        // u_phosphorOffset, u_vignetteStrength, u_vignetteSoftness.
+        // Global Uniforms: u_time, u_brightness, u_contrast, u_saturation, u_intensity (though u_intensity seems unused in CRT spec).
+        return `
+            precision highp float;
+            varying vec2 v_texCoord;
+
+            uniform sampler2D u_webcamTexture;
+            uniform float u_time; // Available, though CRT spec doesn't explicitly use it in main logic
+
+            // Global adjustments (part of the shader's original spec)
+            uniform float u_brightness;
+            uniform float u_contrast;
+            uniform float u_saturation;
+            uniform float u_intensity; // Available, though CRT spec doesn't explicitly use it
+
+            // CRT Specific Uniforms
+            uniform float u_scanlineIntensity;
+            uniform float u_scanlineDensity;
+            uniform float u_curvatureAmount;
+            uniform float u_phosphorOffset;
+            uniform float u_vignetteStrength;
+            uniform float u_vignetteSoftness;
+
+            // Helper functions from the spec
+            vec3 adjustBrightnessContrast(vec3 color, float brightness, float contrast) {
+                vec3 result = color + brightness;
+                result = (result - 0.5) * contrast + 0.5;
+                return clamp(result, 0.0, 1.0);
+            }
+            vec3 adjustSaturation(vec3 color, float saturation) {
+                vec3 gray = vec3(dot(color, vec3(0.2126, 0.7152, 0.0722)));
+                return mix(gray, color, saturation);
+            }
+
+            void main() {
+                vec2 uv = v_texCoord;
+                // Mirroring as per CRT shader spec (consistent with others)
+                uv.x = 1.0 - uv.x;
+
+                // Screen Curvature (Barrel Distortion)
+                vec2 centeredUV = uv * 2.0 - 1.0;
+                float r_sq = dot(centeredUV, centeredUV);
+                vec2 distortedUV = centeredUV * (1.0 - u_curvatureAmount * r_sq);
+                distortedUV = (distortedUV + 1.0) * 0.5;
+
+                vec4 finalColor = vec4(0.0, 0.0, 0.0, 1.0); // Default to black if out of bounds
+
+                if (distortedUV.x >= 0.0 && distortedUV.x <= 1.0 && distortedUV.y >= 0.0 && distortedUV.y <= 1.0) {
+                    // Chromatic Aberration for phosphor effect
+                    vec2 r_offset = vec2(u_phosphorOffset, 0.0);
+                    vec2 b_offset = vec2(-u_phosphorOffset, 0.0);
+                    float r_channel = texture2D(u_webcamTexture, distortedUV + r_offset).r;
+                    float g_channel = texture2D(u_webcamTexture, distortedUV).g;
+                    float b_channel = texture2D(u_webcamTexture, distortedUV + b_offset).b;
+                    finalColor = vec4(r_channel, g_channel, b_channel, 1.0);
+
+                    // Scanlines
+                    // The constant 3.1415926535 * 2.0 is 2*PI.
+                    float scanlineEffect = sin(distortedUV.y * u_scanlineDensity * 6.283185307);
+                    scanlineEffect = (scanlineEffect + 1.0) * 0.5; // Remap to 0-1
+                    finalColor.rgb *= (1.0 - u_scanlineIntensity * (1.0 - scanlineEffect));
+                }
+
+                // Vignette
+                // The 1.414 is approx sqrt(2) to make vignette reach corners better.
+                float vignette = 1.0 - u_vignetteStrength * smoothstep(u_vignetteSoftness, 0.0, length(centeredUV * 1.41421356));
+                finalColor.rgb *= vignette;
+
+                // Brightness, contrast, saturation are handled by the FinalPassShader
+                // finalColor.rgb = adjustSaturation(
+                //     adjustBrightnessContrast(finalColor.rgb, u_brightness, u_contrast),
+                //     u_saturation
+                // );
+                gl_FragColor = finalColor; // Already clamped by previous operations or needs explicit clamp if B/C/S removed
+            }
+        `;
+    }
+
+    getDatamoshFragmentSource() {
+        // NOTE: This shader uses u_webcamTexture and u_previousFrameTexture.
+        // It also has specific uniforms: u_intensity, u_displacement, u_feedback
+        // And global uniforms: u_time, u_motionThreshold, u_trailPersistence, u_hueShiftSpeed,
+        // u_motionExtrapolation, u_brightness, u_contrast, u_saturation.
+        // The VideoEngine will need to manage and supply all of these.
+        return `
+            precision highp float;
+            varying vec2 v_texCoord;
+
+            uniform sampler2D u_webcamTexture; // Current composited scene
+            uniform sampler2D u_previousFrameTexture; // Output of the previous full frame
+
+            uniform float u_time;
+            uniform float u_motionThreshold;
+            uniform float u_trailPersistence;
+            uniform float u_hueShiftSpeed;
+            uniform float u_motionExtrapolation;
+
+            // Datamosh specific
+            uniform float u_intensity;
+            uniform float u_displacement;
+            uniform float u_feedback;
+
+            // Global adjustments (also part of the shader's original spec)
+            uniform float u_brightness;
+            uniform float u_contrast;
+            uniform float u_saturation;
+
+            // Helper functions from the spec
+            float random (vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123 + u_time * 0.01); }
+            float noise (vec2 st) { vec2 i = floor(st); vec2 f = fract(st); float a = random(i); float b = random(i + vec2(1.,0.)); float c = random(i + vec2(0.,1.)); float d = random(i + vec2(1.,1.)); vec2 u = f*f*(3.0-2.0*f); return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y; }
+            vec3 rgb2hsl(vec3 color) { float r = color.r; float g = color.g; float b = color.b; float maxC = max(max(r, g), b); float minC = min(min(r, g), b); float h = 0.0, s = 0.0, l = (maxC + minC) / 2.0; if (maxC == minC) { h = s = 0.0; } else { float d = maxC - minC; s = l > 0.5 ? d / (2.0 - maxC - minC) : d / (maxC + minC); if (maxC == r) { h = (g - b) / d + (g < b ? 6.0 : 0.0); } else if (maxC == g) { h = (b - r) / d + 2.0; } else if (maxC == b) { h = (r - g) / d + 4.0; } h /= 6.0; } return vec3(h, s, l); }
+            float hue2rgb(float p, float q, float t) { if(t < 0.0) t += 1.0; if(t > 1.0) t -= 1.0; if(t < 1.0/6.0) return p + (q - p) * 6.0 * t; if(t < 1.0/2.0) return q; if(t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0; return p; }
+            vec3 hsl2rgb(vec3 hsl) { float h = hsl.x; float s = hsl.y; float l = hsl.z; float r, g, b; if(s == 0.0){ r = g = b = l; } else { float q = l < 0.5 ? l * (1.0 + s) : l + s - l * s; float p = 2.0 * l - q; r = hue2rgb(p, q, h + 1.0/3.0); g = hue2rgb(p, q, h); b = hue2rgb(p, q, h - 1.0/3.0); } return vec3(r, g, b); }
+            vec3 adjustBrightnessContrast(vec3 color, float brightness, float contrast) { vec3 result = color + brightness; result = (result - 0.5) * contrast + 0.5; return clamp(result, 0.0, 1.0); }
+            vec3 adjustSaturation(vec3 color, float saturation) { vec3 gray = vec3(dot(color, vec3(0.2126, 0.7152, 0.0722))); return mix(gray, color, saturation); }
+
+            void main() {
+                // The spec uses 'mirroredTexCoord' for u_webcamTexture.
+                // If VideoEngine already handles mirroring for video layers, this might double-mirror.
+                // For now, assume VideoEngine provides non-mirrored video, so this shader's mirroring is desired.
+                vec2 mirroredTexCoord = vec2(1.0 - v_texCoord.x, v_texCoord.y);
+
+                vec4 currentWebcamColor = texture2D(u_webcamTexture, mirroredTexCoord);
+                vec4 previousOrStaticColor = texture2D(u_previousFrameTexture, v_texCoord); // previousFrame is not mirrored in spec
+
+                float difference = length(currentWebcamColor.rgb - previousOrStaticColor.rgb);
+                vec4 finalColor; vec4 motionDerivedColor; vec4 staticDerivedColor;
+
+                float displacementAmount = u_displacement * (1.0 + u_intensity * 2.0);
+                vec2 R_offset = vec2(random(mirroredTexCoord.yx + u_time * 0.1) - 0.5) * displacementAmount;
+                vec2 B_offset = vec2(random(mirroredTexCoord.xy - u_time * 0.1) - 0.5) * displacementAmount;
+
+                motionDerivedColor = vec4(
+                    texture2D(u_webcamTexture, mirroredTexCoord + R_offset).r,
+                    currentWebcamColor.g,
+                    texture2D(u_webcamTexture, mirroredTexCoord + B_offset).b,
+                    1.0
+                );
+
+                vec2 smearOffset = vec2(noise(v_texCoord*8.0 + u_time*0.05)-0.5) * 0.003 * (1.0 + u_feedback * 3.0);
+                vec4 smearedPreviousOrStatic = texture2D(u_previousFrameTexture, v_texCoord + smearOffset);
+
+                float adjustedTrailPersistence = clamp(u_trailPersistence * (1.0 + u_intensity * 0.5), 0.0, 1.0);
+                // The spec had clamp(..., 0.0, 100.0) which is likely a typo for a mix factor. Assuming 0.0 to 1.0.
+                staticDerivedColor = mix(currentWebcamColor, smearedPreviousOrStatic, adjustedTrailPersistence);
+
+                if (difference > u_motionThreshold) {
+                    finalColor = mix(staticDerivedColor, motionDerivedColor, 0.85 * (1.0 + u_intensity * 0.3));
+                } else {
+                    finalColor = staticDerivedColor;
+                }
+
+                if (u_motionExtrapolation > 0.0) {
+                    vec2 pseudoVelocityOffset = vec2(noise(v_texCoord*8.0 + u_time*0.05)-0.5) * 0.003 * (1.0 + u_feedback);
+                    vec2 extrapolatedCoord = v_texCoord + pseudoVelocityOffset * u_motionExtrapolation;
+                    vec4 extrapolatedColor = texture2D(u_previousFrameTexture, extrapolatedCoord);
+                    float extrapolationMix = u_motionExtrapolation * smoothstep(u_motionThreshold + 0.05, u_motionThreshold - 0.05, difference);
+                    extrapolationMix = clamp(extrapolationMix, 0.0, 0.9);
+                    finalColor = mix(finalColor, extrapolatedColor, extrapolationMix);
+                }
+
+                if (u_hueShiftSpeed != 0.0) {
+                    vec3 hsl = rgb2hsl(finalColor.rgb);
+                    hsl.x = fract(hsl.x + u_time * u_hueShiftSpeed);
+                    if (hsl.y < 0.1) { hsl.y = 0.7; } // Boost saturation if too low during hue shift
+                    finalColor.rgb = hsl2rgb(hsl);
+                }
+
+                // Brightness, contrast, saturation are handled by the FinalPassShader
+                // finalColor.rgb = adjustSaturation(
+                //     adjustBrightnessContrast(finalColor.rgb, u_brightness, u_contrast),
+                //     u_saturation
+                // );
+
+                finalColor = clamp(finalColor, 0.0, 1.0);
+                if (finalColor.a < 0.01) discard; // Keep discard as per spec
+                gl_FragColor = finalColor;
+            }
+        `;
+    }
+
     getFinalPassFragmentSource() {
         return this._getBaseFragmentPrelude() + `
+            // Helper functions for final pass adjustments
+            vec3 adjustBrightnessContrast(vec3 color, float brightness, float contrast) {
+                vec3 result = color + brightness;
+                result = (result - 0.5) * contrast + 0.5;
+                return clamp(result, 0.0, 1.0);
+            }
+            vec3 adjustSaturation(vec3 color, float saturation) {
+                // u_saturation is expected to be a uniform available here
+                vec3 gray = vec3(dot(color, vec3(0.2126, 0.7152, 0.0722)));
+                return mix(gray, color, saturation);
+            }
+
             void main() {
                 vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb; // Start with the input color
 
-                // Apply global enhancements that were previously in _getGlobalEnhancements
+                // Apply global audio enhancements
                 if (u_audioEnergy > 0.5) {
                     effectedColor += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
                 }
                 if (u_beat > 0.7) {
                     effectedColor *= (1.0 + u_beat * 0.2);
                 }
+
+                // Apply global brightness, contrast, saturation adjustments
+                // Assumes u_brightness, u_contrast, u_saturation are available via setGlobalUniforms
+                effectedColor = adjustSaturation(
+                    adjustBrightnessContrast(effectedColor, u_brightness, u_contrast),
+                    u_saturation
+                );
 
                 gl_FragColor = vec4(effectedColor, u_opacity); // u_opacity will be masterOpacity
             }
