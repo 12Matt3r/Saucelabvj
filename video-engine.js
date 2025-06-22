@@ -40,9 +40,11 @@ class VideoEngine {
         };
         this.dynamicQualityEnabled = true;
         this.memoryOptimizer = new MemoryOptimizer();
+        this.lastMemoryOptimizationTime = 0; // Added for MemoryOptimizer
         this.audioBuffer = null;
         this.lastAudioUpdate = 0;
         this.audioUpdateInterval = 100; // Update audio analysis 10fps max
+        this.onPerformanceWarning = null; // Callback for performance warnings
     }
     
     async init() {
@@ -128,7 +130,8 @@ class VideoEngine {
         
         try {
             const vertexShaderSource = this.shaderManager.getVertexShaderSource();
-            const fragmentShaderSource = this.getEnhancedFragmentShaderSource();
+            // const fragmentShaderSource = this.getEnhancedFragmentShaderSource(); // Old way
+            const fragmentShaderSource = this.shaderManager.getEnhancedFragmentShaderSource(); // New way
             
             this.program = this.shaderManager.createProgram(vertexShaderSource, fragmentShaderSource);
             
@@ -148,196 +151,7 @@ class VideoEngine {
         }
     }
     
-    getEnhancedFragmentShaderSource() {
-        return `
-            precision mediump float;
-            uniform sampler2D u_texture;
-            uniform float u_opacity;
-            uniform int u_effect;
-            uniform float u_time;
-            uniform float u_crossfader;
-            uniform vec2 u_resolution;
-            uniform float u_beat;
-            uniform float u_bassLevel;
-            uniform float u_trebleLevel;
-            uniform float u_audioEnergy;
-            uniform vec3 u_audioFrequencies;
-            varying vec2 v_texCoord;
-            
-            // Enhanced noise function for better effects
-            float noise(vec2 co) {
-                return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453;
-            }
-            
-            // Improved RGB shift with audio reactivity
-            vec3 audioReactiveRGBShift(vec2 coord) {
-                float intensity = 0.005 + u_audioEnergy * 0.015;
-                float offset = intensity * (1.0 + u_beat * 0.5);
-                
-                float r = texture2D(u_texture, coord + vec2(offset, 0.0)).r;
-                float g = texture2D(u_texture, coord).g;
-                float b = texture2D(u_texture, coord - vec2(offset, 0.0)).b;
-                
-                // Add chromatic fringing based on frequencies
-                r += u_audioFrequencies.x * 0.2;
-                g += u_audioFrequencies.y * 0.2;
-                b += u_audioFrequencies.z * 0.2;
-                
-                return vec3(r, g, b);
-            }
-            
-            // Advanced glitch effect with audio synchronization
-            vec3 advancedGlitchEffect(vec2 coord) {
-                vec2 uv = coord;
-                float time = u_time;
-                float glitchIntensity = u_beat * 2.0 + u_audioEnergy;
-                
-                // Audio-reactive horizontal displacement
-                if (u_audioFrequencies.x > 0.6) {
-                    uv.x += sin(uv.y * 100.0 + time * 10.0) * 0.02 * glitchIntensity;
-                }
-                
-                // Bass-reactive vertical displacement
-                if (u_bassLevel > 0.7) {
-                    uv.y += cos(uv.x * 80.0 + time * 8.0) * 0.015 * u_bassLevel;
-                }
-                
-                // Digital noise overlay
-                float noiseLevel = noise(uv * 800.0 + time) * u_audioEnergy;
-                vec3 color = texture2D(u_texture, uv).rgb;
-                
-                // Audio-reactive color distortion
-                if (u_beat > 0.8) {
-                    color.r += sin(time * 40.0 + u_audioFrequencies.x * 10.0) * 0.3;
-                    color.g += cos(time * 35.0 + u_audioFrequencies.y * 8.0) * 0.2;
-                    color.b += sin(time * 30.0 + u_audioFrequencies.z * 12.0) * 0.25;
-                }
-                
-                // Add digital noise
-                color += vec3(noiseLevel * 0.1);
-                
-                return color;
-            }
-            
-            // Frequency-reactive kaleidoscope
-            vec3 frequencyKaleido(vec2 coord) {
-                vec2 center = vec2(0.5, 0.5);
-                vec2 uv = coord - center;
-                
-                float angle = atan(uv.y, uv.x) + u_time * (0.5 + u_beat);
-                float radius = length(uv);
-                
-                // Dynamic segments based on audio frequencies
-                float segments = 6.0 + u_audioFrequencies.x * 8.0 + u_bassLevel * 4.0;
-                angle = floor(angle / (6.28318 / segments)) * (6.28318 / segments);
-                
-                // Multi-frequency scaling
-                float scaleX = 1.0 + u_audioFrequencies.y * 0.3;
-                float scaleY = 1.0 + u_audioFrequencies.z * 0.3;
-                float beatScale = 1.0 + u_beat * 0.4;
-                
-                uv = vec2(cos(angle), sin(angle)) * radius * beatScale;
-                uv.x *= scaleX;
-                uv.y *= scaleY;
-                uv += center;
-                
-                return texture2D(u_texture, uv).rgb;
-            }
-            
-            // Audio-reactive zoom with frequency isolation
-            vec3 frequencyZoom(vec2 coord) {
-                vec2 center = vec2(0.5, 0.5);
-                
-                // Different zoom levels for different frequencies
-                float bassZoom = 1.0 + u_bassLevel * 0.3;
-                float midZoom = 1.0 + u_audioFrequencies.y * 0.2;
-                float trebleZoom = 1.0 + u_trebleLevel * 0.15;
-                
-                float combinedZoom = bassZoom * midZoom * trebleZoom;
-                combinedZoom *= (1.0 + sin(u_time * 3.0) * 0.1);
-                
-                vec2 uv = (coord - center) / combinedZoom + center;
-                
-                // Add slight rotation based on audio energy
-                float rotation = u_audioEnergy * 0.1;
-                float c = cos(rotation);
-                float s = sin(rotation);
-                mat2 rotMatrix = mat2(c, -s, s, c);
-                uv = rotMatrix * (uv - center) + center;
-                
-                return texture2D(u_texture, uv).rgb;
-            }
-            
-            // Enhanced strobe with frequency separation
-            vec3 frequencyStrobe(vec2 coord) {
-                vec3 color = texture2D(u_texture, coord).rgb;
-                
-                // Different strobe patterns for different frequencies
-                float bassStrobe = step(0.7, sin(u_time * 20.0 + u_bassLevel * 30.0));
-                float midStrobe = step(0.6, sin(u_time * 35.0 + u_audioFrequencies.y * 40.0));
-                float trebleStrobe = step(0.5, sin(u_time * 50.0 + u_trebleLevel * 60.0));
-                
-                // Apply colored strobes
-                color = mix(color, vec3(1.0, 0.2, 0.2), bassStrobe * u_bassLevel * 0.8);
-                color = mix(color, vec3(0.2, 1.0, 0.2), midStrobe * u_audioFrequencies.y * 0.6);
-                color = mix(color, vec3(0.2, 0.2, 1.0), trebleStrobe * u_trebleLevel * 0.7);
-                
-                return color;
-            }
-            
-            void main() {
-                vec3 color = texture2D(u_texture, v_texCoord).rgb;
-                
-                if (u_effect == 1) {
-                    color = audioReactiveRGBShift(v_texCoord);
-                } else if (u_effect == 2) {
-                    float distortionAmount = 0.03 + u_audioEnergy * 0.02;
-                    vec2 distortedCoord = v_texCoord + sin(v_texCoord * 15.0 + u_time * 2.0) * distortionAmount;
-                    color = texture2D(u_texture, distortedCoord).rgb;
-                } else if (u_effect == 3) {
-                    color = 1.0 - color;
-                    // Audio-reactive invert intensity
-                    float invertStrength = 0.7 + u_beat * 0.3 + u_audioEnergy * 0.2;
-                    color = mix(texture2D(u_texture, v_texCoord).rgb, color, invertStrength);
-                } else if (u_effect == 4) {
-                    color = advancedGlitchEffect(v_texCoord);
-                } else if (u_effect == 5) {
-                    color = frequencyKaleido(v_texCoord);
-                } else if (u_effect == 6) {
-                    float pixelSize = 0.02 + u_beat * 0.08 + u_audioEnergy * 0.05;
-                    vec2 grid = floor(v_texCoord / pixelSize) * pixelSize;
-                    color = texture2D(u_texture, grid).rgb;
-                } else if (u_effect == 7) {
-                    vec2 uv = v_texCoord;
-                    if (uv.x > 0.5) uv.x = 1.0 - uv.x;
-                    color = texture2D(u_texture, uv).rgb;
-                } else if (u_effect == 8) {
-                    // Enhanced color cycling with frequency separation
-                    color = color * vec3(
-                        1.0 + sin(u_time * 1.0 + u_bassLevel * 3.0) * 0.5,
-                        1.0 + sin(u_time * 1.1 + u_audioFrequencies.y * 3.0) * 0.5,
-                        1.0 + sin(u_time * 1.2 + u_trebleLevel * 3.0) * 0.5
-                    );
-                } else if (u_effect == 9) {
-                    color = frequencyZoom(v_texCoord);
-                } else if (u_effect == 10) {
-                    color = frequencyStrobe(v_texCoord);
-                }
-                
-                // Global audio enhancement
-                if (u_audioEnergy > 0.5) {
-                    color += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
-                }
-                
-                // Beat-reactive brightness boost
-                if (u_beat > 0.7) {
-                    color *= (1.0 + u_beat * 0.2);
-                }
-                
-                gl_FragColor = vec4(color, u_opacity);
-            }
-        `;
-    }
+    // Removed getEnhancedFragmentShaderSource() method from here. It's now in ShaderManager.
     
     createFrameBuffer() {
         try {
@@ -487,9 +301,10 @@ class VideoEngine {
             return;
         }
         
-        // Memory optimization every 5 seconds
-        if (frameStart % 5000 < 100) {
-            this.memoryOptimizer.optimize(this.layers);
+        // Memory optimization
+        if (frameStart - this.lastMemoryOptimizationTime > this.memoryOptimizer.optimizationInterval) {
+            this.memoryOptimizer.optimize(this.layers, this.gl); // Pass gl context
+            this.lastMemoryOptimizationTime = frameStart;
         }
         
         if (frameStart - this.lastFrameTime >= 1000) {
@@ -681,15 +496,37 @@ class VideoEngine {
     }
     
     setBlendMode(gl, blendMode) {
+        // Ensure blend equation is ADD, which is the default for WebGL
+        gl.blendEquation(gl.FUNC_ADD);
+
         if (blendMode === 'normal') {
-            gl.blendFunc(gl.ONE, gl.ZERO);
+            // Standard alpha blending: C_result = C_source * A_source + C_dest * (1 - A_source)
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         } else if (blendMode === 'add') {
+            // Additive blending: C_result = C_source * A_source + C_dest * 1
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
         } else if (blendMode === 'subtract') {
-            gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+            // Subtract-like effect (can vary): C_result = C_dest * 1 - C_source * A_source
+            // This requires FUNC_REVERSE_SUBTRACT or careful shader math.
+            // For a simple subtractive effect with standard FUNC_ADD:
+            // This is actually hard to achieve correctly with fixed-function pipeline for "Source - Dest"
+            // or "Dest - Source".
+            // A common VJ "subtract" might be Dest - Source.
+            // Using gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT); and gl.blendFunc(gl.SRC_ALPHA, gl.ONE); is one way.
+            // For now, let's keep it simple or note it for review.
+            // The original gl.ZERO, gl.SRC_COLOR was: D*0 + S*Sc = S*Sc (not subtract)
+            // Let's use standard alpha blending as a placeholder if true subtract is complex.
+            console.warn(`Blend mode 'subtract' may not be standard. Review its intended visual effect.`);
+            gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); // Placeholder
         } else if (blendMode === 'multiply') {
-            gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+            // Multiply blending: C_result = C_source * C_dest + C_dest * 0
+            // Requires shader output alpha to be 1 or use gl.ONE_MINUS_SRC_ALPHA for second factor
+            // gl.blendFunc(gl.DST_COLOR, gl.ZERO); // Common for multiply: Dst * Src
+            // The original gl.ZERO, gl.SRC_COLOR was: D*0 + S*Sc = S*Sc (not multiply)
+            console.warn(`Blend mode 'multiply' may not be standard. Review its intended visual effect.`);
+            gl.blendFunc(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA); // A common multiply mode
         } else {
+            // Default to standard alpha blending
             gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         }
     }
@@ -762,12 +599,8 @@ class VideoEngine {
     }
     
     suggestPerformanceOptimization() {
-        if (window.vjMixer?.uiManager && Math.random() < 0.1) { // Only show occasionally
-            window.vjMixer.uiManager.showNotification(
-                'Consider reducing active layers or effects for better performance', 
-                'warning', 
-                4000
-            );
+        if (this.onPerformanceWarning && Math.random() < 0.1) { // Only show occasionally
+            this.onPerformanceWarning('Consider reducing active layers or effects for better performance');
         }
     }
     
@@ -1060,22 +893,36 @@ class MemoryOptimizer {
         this.memoryThreshold = 200 * 1024 * 1024; // 200MB
     }
     
-    optimize(layers) {
+    optimize(layers, gl) { // Added gl parameter
         const now = performance.now();
         if (now - this.lastOptimization < this.optimizationInterval) return;
         
         this.lastOptimization = now;
         
+        if (!gl) {
+            console.warn('MemoryOptimizer: WebGL context not provided for optimization.');
+            return;
+        }
+
         // Clean up unused textures
         layers.forEach(layer => {
-            if (!layer.isActive && layer.texture) {
-                // Don't immediately delete, but mark for cleanup
+            if (!layer.isActive && layer.texture && !layer.textureCleanupTime) {
+                // If layer is inactive and has a texture not already marked for cleanup
+                console.log(`MemoryOptimizer: Marking texture for layer for potential cleanup.`);
                 layer.textureCleanupTime = now + 10000; // Clean after 10s of inactivity
+            } else if (layer.isActive && layer.textureCleanupTime) {
+                // If layer becomes active again, cancel cleanup
+                console.log(`MemoryOptimizer: Layer became active, cancelling texture cleanup.`);
+                layer.textureCleanupTime = null;
             }
             
             if (layer.textureCleanupTime && now > layer.textureCleanupTime) {
-                // Texture cleanup would go here if we had gl context
-                layer.textureCleanupTime = null;
+                if (layer.texture && !layer.isActive) { // Double check layer is still inactive
+                    console.log(`MemoryOptimizer: Deleting texture for inactive layer.`);
+                    gl.deleteTexture(layer.texture);
+                    layer.texture = null; // Important to release reference
+                }
+                layer.textureCleanupTime = null; // Reset timer
             }
         });
         
