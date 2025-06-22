@@ -1,0 +1,79 @@
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+    #main-content {
+        grid-template-columns: 250px 1fr 200px;
+    }
+}
+
+@media (max-width: 900px) {
+    #main-content {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+    }
+    
+    #effects-grid {
+        grid-template-columns: repeat(5, 1fr);
+    }
+}
+
+/* Enhanced mobile support */
+@media (max-width: 768px) {
+    #main-content {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 300px auto;
+        gap: 10px;
+    }
+    
+    #layers-container {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    .layer {
+        padding: 8px;
+    }
+    
+    .layer-preview {
+        height: 50px;
+    }
+    
+    .opacity-slider {
+        height: 80px;
+    }
+    
+    #effects-panel {
+        order: -1;
+    }
+    
+    #effects-grid {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+    }
+    
+    .effect-btn {
+        padding: 12px 6px;
+        font-size: 10px;
+    }
+}
+
+/* Touch-friendly controls */
+.touch-control {
+    min-height: 44px;
+    min-width: 44px;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    button {
+        min-height: 44px;
+        font-size: 14px;
+    }
+    
+    .effect-btn {
+        min-height: 50px;
+    }
+    
+    .sequencer-step {
+        min-height: 50px;
+    }
+}

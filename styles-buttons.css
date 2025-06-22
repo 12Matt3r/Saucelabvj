@@ -1,0 +1,66 @@
+/* Button Styles */
+button {
+    background: linear-gradient(135deg, #333 0%, #444 100%);
+    color: white;
+    border: 1px solid #555;
+    padding: 8px 16px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    transition: left 0.3s;
+}
+
+button:hover::before {
+    left: 100%;
+}
+
+button:hover {
+    background: linear-gradient(135deg, #444 0%, #555 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+}
+
+button:active, button.active {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(255, 107, 107, 0.3);
+}
+
+.mode-btn.active {
+    background: #4ecdc4;
+}
+
+.touch-control {
+    min-height: 44px;
+    min-width: 44px;
+}
+
+.emergency-btn {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
+}
+
+.emergency-btn:hover {
+    background: linear-gradient(135deg, #ff5252 0%, #ff4444 100%);
+}
+
+@media (hover: none) and (pointer: coarse) {
+    button {
+        min-height: 44px;
+        font-size: 14px;
+    }
+}
+

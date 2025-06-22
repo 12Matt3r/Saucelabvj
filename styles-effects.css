@@ -1,0 +1,163 @@
+#effects-panel {
+    background: #2a2a2a;
+    border-radius: 5px;
+    padding: 15px;
+    position: relative;
+}
+
+#effects-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #ff6b6b, transparent);
+    opacity: 0.5;
+}
+
+#effects-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.effect-btn {
+    padding: 15px 10px;
+    font-size: 11px;
+    background: linear-gradient(135deg, #333 0%, #2a2a2a 100%);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 6px;
+    position: relative;
+    overflow: hidden;
+    transform: translateZ(0);
+}
+
+.effect-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(45deg, transparent 30%, rgba(255, 255, 255, 0.1) 50%, transparent 70%);
+    transform: translateX(-100%);
+    transition: transform 0.4s ease;
+}
+
+.effect-btn:hover::before {
+    transform: translateX(100%);
+}
+
+.effect-btn:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    background: linear-gradient(135deg, #444 0%, #333 100%);
+}
+
+.effect-btn:active, .effect-btn.active {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
+    transform: scale(0.98) translateY(0);
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 20px rgba(255, 107, 107, 0.4);
+}
+
+.effect-btn.touch-active {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ff5252 100%);
+    transform: scale(0.95);
+}
+
+/* Enhanced effect buttons with audio feedback */
+.effect-btn.audio-active {
+    background: linear-gradient(135deg, #4ecdc4 0%, #45b7aa 100%);
+    transform: scale(1.05);
+    box-shadow: 0 0 20px rgba(78, 205, 196, 0.6);
+    animation: audioReactive 0.2s ease;
+}
+
+@keyframes audioReactive {
+    0%, 100% { 
+        box-shadow: 0 0 20px rgba(78, 205, 196, 0.6);
+    }
+    50% { 
+        box-shadow: 0 0 30px rgba(78, 205, 196, 0.9);
+        transform: scale(1.08);
+    }
+}
+
+/* Effect combinations */
+.effect-combo {
+    position: absolute;
+    top: -40px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, #9c27b0 0%, #673ab7 100%);
+    color: white;
+    padding: 8px 12px;
+    border-radius: 20px;
+    font-size: 10px;
+    z-index: 10;
+    animation: comboAppearOptimized 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 4px 15px rgba(156, 39, 176, 0.4);
+    backdrop-filter: blur(5px);
+}
+
+@keyframes comboAppearOptimized {
+    from { 
+        transform: translateX(-50%) translateY(10px) scale(0.8); 
+        opacity: 0; 
+    }
+    to { 
+        transform: translateX(-50%) translateY(0) scale(1); 
+        opacity: 1; 
+    }
+}
+
+/* Beat-reactive effects */
+.effect-btn.beat-reactive {
+    animation: beatReactive 0.15s ease;
+}
+
+@keyframes beatReactive {
+    0%, 100% { transform: scale(1.05); }
+    50% { transform: scale(1.1); }
+}
+
+/* Performance optimized effects */
+body.performance-mode .effect-btn {
+    transition: none !important;
+    animation: none !important;
+}
+
+body.performance-mode .effect-btn:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+body.performance-mode .effect-btn.active {
+    background: #ff6b6b !important;
+    transform: none !important;
+}
+
+/* Audio-reactive effect indicators */
+.effect-btn::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    background: transparent;
+    border-radius: 50%;
+    transition: background 0.1s ease;
+}
+
+.effect-btn.audio-synced::after {
+    background: #4ecdc4;
+    box-shadow: 0 0 8px rgba(78, 205, 196, 0.8);
+    animation: syncPulse 1s infinite;
+}
+
+@keyframes syncPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}

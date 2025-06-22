@@ -1,0 +1,150 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VJ Mixer Pro - Live Performance Tool</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles-buttons.css">
+    <link rel="stylesheet" href="styles-forms.css">
+    <link rel="stylesheet" href="styles-overlays.css">
+    <link rel="stylesheet" href="styles-animations.css">
+    <link rel="stylesheet" href="styles-notifications.css">
+    <link rel="stylesheet" href="styles-layers.css">
+    <link rel="stylesheet" href="styles-effects.css">
+    <link rel="stylesheet" href="styles-sequencer.css">
+    <link rel="stylesheet" href="styles-responsive.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+</head>
+<body>
+    <div id="app">
+        <!-- Main Interface -->
+        <div id="main-interface">
+            <!-- Header Controls -->
+            <div id="header">
+                <div class="control-group">
+                    <button id="key-assignment-btn" class="mode-btn touch-control" title="Assign keyboard shortcuts">⌨️ Key Assignment</button>
+                    <button id="midi-assignment-btn" class="mode-btn touch-control" title="Assign MIDI controls">🎛️ MIDI Assignment</button>
+                    <button id="output-window-btn" class="touch-control" title="Open output window">📺 Output Window</button>
+                    <button id="fullscreen-btn" class="touch-control" title="Toggle fullscreen (F11)">⛶ Fullscreen</button>
+                </div>
+                <div class="control-group bpm-visual">
+                    <label>BPM: <input type="number" id="bpm-input" value="120" min="60" max="200" class="touch-control"></label>
+                    <button id="tap-tempo-btn" class="touch-control" title="Tap to set tempo">TAP TEMPO</button>
+                    <button id="reset-btn" title="Emergency stop (Space)" class="emergency-btn touch-control">🛑 RESET</button>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div id="main-content">
+                <!-- Video Layers Panel -->
+                <div id="layers-panel">
+                    <h3>🎬 Video Layers (1-6) - Swipe up/down for opacity</h3>
+                    <div id="layers-container">
+                        <!-- Layers will be generated dynamically -->
+                    </div>
+                </div>
+
+                <!-- Preview Screen -->
+                <div id="preview-section">
+                    <canvas id="preview-canvas" width="640" height="360"></canvas>
+                    <div id="preview-controls">
+                        <input type="file" id="video-file-input" accept="video/*" multiple style="display: none;">
+                        <button id="load-video-btn" class="touch-control">📁 Load Video</button>
+                        <span class="help-text">Drag & drop videos anywhere | Long press layers to load</span>
+                    </div>
+                </div>
+
+                <!-- Effects Panel -->
+                <div id="effects-panel">
+                    <h3>✨ Effects (Hold to Apply) - Touch & hold on mobile</h3>
+                    <div id="effects-grid">
+                        <button class="effect-btn assignable touch-control" data-effect="rgbShift" title="RGB chromatic aberration">RGB SHIFT</button>
+                        <button class="effect-btn assignable touch-control" data-effect="distort" title="Wave distortion">DISTORT</button>
+                        <button class="effect-btn assignable touch-control" data-effect="invert" title="Color inversion">INVERT</button>
+                        <button class="effect-btn assignable touch-control" data-effect="glitch" title="Digital glitch">GLITCH</button>
+                        <button class="effect-btn assignable touch-control" data-effect="kaleido" title="Kaleidoscope">KALEIDO</button>
+                        <button class="effect-btn assignable touch-control" data-effect="pixelate" title="Pixelation">PIXELATE</button>
+                        <button class="effect-btn assignable touch-control" data-effect="mirror" title="Mirror effect">MIRROR</button>
+                        <button class="effect-btn assignable touch-control" data-effect="color" title="Color cycling">COLOR</button>
+                        <button class="effect-btn assignable touch-control" data-effect="zoom" title="Zoom pulse">ZOOM</button>
+                        <button class="effect-btn assignable touch-control" data-effect="strobe" title="Strobe light">STROBE</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Enhanced Sequencer -->
+            <div id="sequencer-section">
+                <h3>🎵 8-Step Sequencer & Pattern Recorder</h3>
+                <div id="sequencer-grid">
+                    <!-- Steps will be generated dynamically -->
+                </div>
+                <div id="sequencer-controls">
+                    <button id="sequencer-play-btn" class="touch-control">▶️ PLAY</button>
+                    <button id="sequencer-stop-btn" class="touch-control">⏹️ STOP</button>
+                    <div id="beat-indicator" title="Beat indicator"></div>
+                    <div id="step-counter">Step 1/8</div>
+                </div>
+                <!-- Pattern controls will be added dynamically -->
+            </div>
+            
+            <!-- Performance Tips -->
+            <div id="performance-tips" class="performance-tips hidden">
+                <h4>💡 Performance Tips</h4>
+                <ul>
+                    <li>Use Auto quality mode for optimal performance</li>
+                    <li>Limit active layers when using multiple effects</li>
+                    <li>Enable beat-sync for automatic visual enhancement</li>
+                    <li>Use lower video resolutions for better performance</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Assignment Mode Overlay -->
+        <div id="assignment-overlay" class="overlay hidden">
+            <div class="overlay-content">
+                <h3 id="assignment-title">Assignment Mode</h3>
+                <p id="assignment-instructions">Click any control to assign, right-click to remove assignment</p>
+                <div class="assignment-help">
+                    <p><strong>Keyboard shortcuts:</strong></p>
+                    <ul>
+                        <li>1-6: Select layers</li>
+                        <li>←→: Crossfader</li>
+                        <li>Space: Emergency stop</li>
+                    </ul>
+                    <p><strong>Mobile controls:</strong></p>
+                    <ul>
+                        <li>Swipe up/down on layers: Opacity</li>
+                        <li>Long press layer: Load video</li>
+                        <li>Touch & hold effects: Apply</li>
+                    </ul>
+                </div>
+                <button id="exit-assignment-btn" class="touch-control">Exit Assignment Mode</button>
+            </div>
+        </div>
+
+        <!-- Save Indicator -->
+        <div id="save-indicator" class="save-indicator">
+            <span>⚡ Settings Saved</span>
+        </div>
+
+        <!-- Output Window -->
+        <div id="output-preview" class="hidden">
+            <canvas id="output-canvas" width="1920" height="1080"></canvas>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="storage.js"></script>
+    <script src="shader-manager.js"></script>
+    <script src="video-engine.js"></script>
+    <script src="midi-controller.js"></script>
+    <script src="sequencer.js"></script>
+    <script src="layer-manager.js"></script>
+    <script src="assignment-manager.js"></script>
+    <script src="performance-monitor.js"></script>
+    <script src="pattern-manager.js"></script>
+    <script src="ui-manager.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
