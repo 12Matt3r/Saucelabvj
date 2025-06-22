@@ -17,6 +17,24 @@ class ShaderManager {
         `;
     }
 
+    getFinalPassFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            void main() {
+                vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb; // Start with the input color
+
+                // Apply global enhancements that were previously in _getGlobalEnhancements
+                if (u_audioEnergy > 0.5) {
+                    effectedColor += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
+                }
+                if (u_beat > 0.7) {
+                    effectedColor *= (1.0 + u_beat * 0.2);
+                }
+
+                gl_FragColor = vec4(effectedColor, u_opacity); // u_opacity will be masterOpacity
+            }
+        `;
+    }
+
     getPixelateFragmentSource() {
         return this._getBaseFragmentPrelude() + `
             vec3 effect_pixelate(vec2 coord, sampler2D tex, float beat, float audioEnergy) {
@@ -253,26 +271,22 @@ class ShaderManager {
         `;
     }
 
-    _getGlobalEnhancements() {
-        // These were global adjustments in the original uber-shader's main()
-        // For multi-pass, apply these carefully, perhaps only in the final pass
-        // or ensure they are idempotent if applied in each pass.
-        // For now, including them to maintain visual consistency with original.
-        return `
-            if (u_audioEnergy > 0.5) {
-                effectedColor += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
-            }
-            if (u_beat > 0.7) {
-                effectedColor *= (1.0 + u_beat * 0.2);
-            }
-        `;
-    }
+    // _getGlobalEnhancements() { // Logic moved to getFinalPassFragmentSource, no longer needed here.
+    //     return `
+    //         if (u_audioEnergy > 0.5) {
+    //             effectedColor += vec3(0.05, 0.02, 0.01) * u_audioEnergy;
+    //         }
+    //         if (u_beat > 0.7) {
+    //             effectedColor *= (1.0 + u_beat * 0.2);
+    //         }
+    //     `;
+    // }
 
     getPassthroughFragmentSource() {
         return this._getBaseFragmentPrelude() + `
             void main() {
                 vec3 effectedColor = texture2D(u_texture, v_texCoord).rgb;
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed, will be applied in final pass
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -297,7 +311,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_rgbShift(v_texCoord, u_texture, u_audioEnergy, u_beat, u_audioFrequencies);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -313,7 +327,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_distort(v_texCoord, u_texture, u_time, u_audioEnergy);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -332,7 +346,7 @@ class ShaderManager {
             void main() {
                 vec3 sourceColor = texture2D(u_texture, v_texCoord).rgb;
                 vec3 effectedColor = effect_color(sourceColor, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies); // Renamed
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -368,8 +382,8 @@ class ShaderManager {
             }
 
             void main() {
-                vec3 effectedColor = effect_zoomPulse(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies, u_audioEnergy);
-                ${this._getGlobalEnhancements()}
+                vec3 effectedColor = effect_zoom(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies, u_audioEnergy); // Name was already effect_zoom here, good.
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -395,12 +409,12 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_strobe(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
     }
-    
+
     getGlitchFragmentSource() {
         // Extracted and adapted from the original advancedGlitchEffect
         return this._getBaseFragmentPrelude() + `
@@ -429,7 +443,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_glitch(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_audioEnergy, u_bassLevel);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -446,7 +460,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_invert(v_texCoord, u_texture, u_beat, u_audioEnergy);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -480,7 +494,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_kaleido(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_bassLevel);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -497,7 +511,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_pixelate(v_texCoord, u_texture, u_beat, u_audioEnergy);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;
@@ -513,7 +527,7 @@ class ShaderManager {
 
             void main() {
                 vec3 effectedColor = effect_mirror(v_texCoord, u_texture);
-                ${this._getGlobalEnhancements()}
+                // Global enhancements removed
                 gl_FragColor = vec4(effectedColor, u_opacity);
             }
         `;

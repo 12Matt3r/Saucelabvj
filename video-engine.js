@@ -170,6 +170,7 @@ class VideoEngine {
                 color: this.shaderManager.getColorFragmentSource(),      // Renamed from colorCycle
                 zoom: this.shaderManager.getZoomFragmentSource(),        // Renamed from zoomPulse
                 strobe: this.shaderManager.getStrobeFragmentSource(),
+                finalPass: this.shaderManager.getFinalPassFragmentSource(), // Added final pass shader
             };
 
             for (const effectName in effectShaderSources) {
@@ -564,31 +565,33 @@ class VideoEngine {
         this.gl.clearColor(0, 0, 0, 1); // Clear screen
         this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-        const finalPassProgram = this.effectPrograms.passthrough; // Use passthrough to draw final texture
-        this.gl.useProgram(finalPassProgram);
-        this.setGlobalUniforms(finalPassProgram, time, audioData, beatData);
+        const finalProgram = this.effectPrograms.finalPass || this.effectPrograms.passthrough; // Fallback to passthrough if finalPass isn't loaded
+        this.gl.useProgram(finalProgram);
+        this.setGlobalUniforms(finalProgram, time, audioData, beatData); // Set globals including audio for enhancements
         
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture);
-        const texLoc = this.gl.getUniformLocation(finalPassProgram, 'u_texture');
+        const texLoc = this.gl.getUniformLocation(finalProgram, 'u_texture');
         this.gl.uniform1i(texLoc, 0);
 
         // Apply master opacity in the final pass
-        const opacityLoc = this.gl.getUniformLocation(finalPassProgram, 'u_opacity');
-        if(opacityLoc) this.gl.uniform1f(opacityLoc, this.masterOpacity); // Apply master opacity here
+        const opacityLoc = this.gl.getUniformLocation(finalProgram, 'u_opacity');
+        if(opacityLoc) this.gl.uniform1f(opacityLoc, this.masterOpacity);
 
         // Ensure correct blending for final output to canvas
+        // (FinalPassShader outputs alpha based on u_opacity which is masterOpacity)
+        this.gl.enable(this.gl.BLEND); // Make sure blend is enabled for this final draw
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
 
 
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         
-        this.gl.disable(this.gl.BLEND);
+        this.gl.disable(this.gl.BLEND); // Disable blend after drawing to screen
         
         // Render to output window if available
         if (this.outputGl && this.outputCanvas && budget.canRenderAllLayers) {
-            // Similar logic to render currentReadTexture to outputCanvas
-            this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalPassProgram, time, audioData, beatData);
+            // Use the same finalProgram for the output window
+            this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalProgram, time, audioData, beatData);
         }
     }
 
