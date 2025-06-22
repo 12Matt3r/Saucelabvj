@@ -17,6 +17,23 @@ class ShaderManager {
         `;
     }
 
+    getPixelateFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_pixelate(vec2 coord, sampler2D tex, float beat, float audioEnergy) {
+                float pixelSize = 0.02 + beat * 0.08 + audioEnergy * 0.05;
+                pixelSize = max(0.001, pixelSize); // Prevent division by zero if pixelSize is too small or zero
+                vec2 grid = floor(coord / pixelSize) * pixelSize;
+                return texture2D(tex, grid).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_pixelate(v_texCoord, u_texture, u_beat, u_audioEnergy);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
     getEnhancedFragmentShaderSource() {
         return `
             precision mediump float;
@@ -301,6 +318,88 @@ class ShaderManager {
             }
         `;
     }
+
+    getColorFragmentSource() { // Renamed from getColorCycleFragmentSource
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_color(vec3 sourceColor, float time, float bassLevel, float trebleLevel, vec3 audioFreq) { // Renamed
+                return sourceColor * vec3(
+                    1.0 + sin(time * 1.0 + bassLevel * 3.0) * 0.5,
+                    1.0 + sin(time * 1.1 + audioFreq.y * 3.0) * 0.5, // audioFreq.y is mid
+                    1.0 + sin(time * 1.2 + trebleLevel * 3.0) * 0.5
+                );
+            }
+
+            void main() {
+                vec3 sourceColor = texture2D(u_texture, v_texCoord).rgb;
+                vec3 effectedColor = effect_color(sourceColor, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies); // Renamed
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getZoomFragmentSource() { // Renamed from getZoomPulseFragmentSource
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_zoom(vec2 coord, sampler2D tex, float time, float bassLevel, float trebleLevel, vec3 audioFreq, float audioEnergy) { // Renamed
+                vec2 center = vec2(0.5, 0.5);
+
+                float bZoom = 1.0 + bassLevel * 0.3;
+                float mZoom = 1.0 + audioFreq.y * 0.2; // audioFreq.y is mid
+                float tZoom = 1.0 + trebleLevel * 0.15;
+
+                float combinedZoom = bZoom * mZoom * tZoom;
+                combinedZoom *= (1.0 + sin(time * 3.0) * 0.1); // Pulsing
+                combinedZoom = max(0.00001, combinedZoom);
+
+                float invCombinedZoom = 1.0 / combinedZoom;
+                vec2 uv = (coord - center) * invCombinedZoom + center;
+
+                float rotation = audioEnergy * 0.1;
+                float c = cos(rotation);
+                float s = sin(rotation);
+                mat2 rotMatrix = mat2(c, -s, s, c);
+                uv = rotMatrix * (uv - center) + center;
+
+                // Basic boundary check for zoomed UVs to avoid artifacts from CLAMP_TO_EDGE if uv goes far out
+                if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                    return vec3(0.0); // Or some background color
+                }
+                return texture2D(tex, uv).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_zoomPulse(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies, u_audioEnergy);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getStrobeFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_strobe(vec2 coord, sampler2D tex, float time, float bassLevel, float trebleLevel, vec3 audioFreq) {
+                vec3 sourceColor = texture2D(tex, coord).rgb;
+                vec3 effectedColor = sourceColor;
+
+                float bassStrobeFactor = step(0.7, sin(time * 20.0 + bassLevel * 30.0));
+                effectedColor = mix(effectedColor, vec3(1.0, 0.2, 0.2), bassStrobeFactor * bassLevel * 0.8);
+
+                float midStrobeFactor = step(0.6, sin(time * 35.0 + audioFreq.y * 40.0)); // audioFreq.y is mid
+                effectedColor = mix(effectedColor, vec3(0.2, 1.0, 0.2), midStrobeFactor * audioFreq.y * 0.6);
+
+                float trebleStrobeFactor = step(0.5, sin(time * 50.0 + trebleLevel * 60.0));
+                effectedColor = mix(effectedColor, vec3(0.2, 0.2, 1.0), trebleStrobeFactor * trebleLevel * 0.7);
+
+                return effectedColor;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_strobe(v_texCoord, u_texture, u_time, u_bassLevel, u_trebleLevel, u_audioFrequencies);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
     
     getGlitchFragmentSource() {
         // Extracted and adapted from the original advancedGlitchEffect
@@ -336,8 +435,91 @@ class ShaderManager {
         `;
     }
 
+    getInvertFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_invert(vec2 coord, sampler2D tex, float beat, float audioEnergy) {
+                vec3 sourceColor = texture2D(tex, coord).rgb;
+                vec3 invertedColor = 1.0 - sourceColor;
+                float invertStrength = 0.7 + beat * 0.3 + audioEnergy * 0.2;
+                return mix(sourceColor, invertedColor, clamp(invertStrength, 0.0, 1.0));
+            }
+
+            void main() {
+                vec3 effectedColor = effect_invert(v_texCoord, u_texture, u_beat, u_audioEnergy);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getKaleidoFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_kaleido(vec2 coord, sampler2D tex, float time, float beat, vec3 audioFreq, float bassLevel) {
+                vec2 center = vec2(0.5, 0.5);
+                vec2 uv = coord - center;
+
+                float angle = atan(uv.y, uv.x) + time * (0.5 + beat);
+                float radius = length(uv);
+
+                float segments = 6.0 + audioFreq.x * 8.0 + bassLevel * 4.0;
+                segments = max(1.0, segments);
+                float segmentAngle = 6.28318 / segments; // 2*PI / segments
+                angle = floor(angle / segmentAngle) * segmentAngle;
+
+                float scaleX = 1.0 + audioFreq.y * 0.3;
+                float scaleY = 1.0 + audioFreq.z * 0.3;
+                float beatScale = 1.0 + beat * 0.4;
+
+                uv = vec2(cos(angle), sin(angle)) * radius * beatScale;
+                uv.x *= scaleX;
+                uv.y *= scaleY;
+                uv += center;
+
+                return texture2D(tex, uv).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_kaleido(v_texCoord, u_texture, u_time, u_beat, u_audioFrequencies, u_bassLevel);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getPixelateFragmentSource() { // Re-adding here correctly
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_pixelate(vec2 coord, sampler2D tex, float beat, float audioEnergy) {
+                float pixelSize = 0.02 + beat * 0.08 + audioEnergy * 0.05;
+                pixelSize = max(0.001, pixelSize);
+                vec2 grid = floor(coord / pixelSize) * pixelSize;
+                return texture2D(tex, grid).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_pixelate(v_texCoord, u_texture, u_beat, u_audioEnergy);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
+    getMirrorFragmentSource() {
+        return this._getBaseFragmentPrelude() + `
+            vec3 effect_mirror(vec2 coord, sampler2D tex) {
+                vec2 uv = coord;
+                if (uv.x > 0.5) uv.x = 1.0 - uv.x;
+                return texture2D(tex, uv).rgb;
+            }
+
+            void main() {
+                vec3 effectedColor = effect_mirror(v_texCoord, u_texture);
+                ${this._getGlobalEnhancements()}
+                gl_FragColor = vec4(effectedColor, u_opacity);
+            }
+        `;
+    }
+
     // Add other effect shader sources here following the same pattern...
-    // e.g., getInvertFragmentSource, getKaleidoFragmentSource, etc.
 
     getFragmentShaderSource() { // This method seems unused now based on video-engine.js, but I'll leave it.
         return `
