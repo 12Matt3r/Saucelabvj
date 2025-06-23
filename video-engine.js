@@ -75,11 +75,27 @@ class VideoEngine {
                 phosphorOffset: 0.002,
                 vignetteStrength: 0.2,
                 vignetteSoftness: 0.5
-            }
-            // Add other new effects' controls here as they are implemented
-        };
+                },
+                pixelsort: {
+                    intensity: 0.5,
+                    displacement: 0.02, // Small default, range 0-0.1 or similar
+                    feedback: 0.0,
+                    threshold: 0.5
+                },
+                feedback: {
+                    intensity: 0.5,
+                    displacement: 0.01, // Small warp
+                    feedback: 0.85, // Strong feedback default
+                    feedback_glowThreshold: 0.1 // Specific threshold for glow
+                },
+                feedbackDisplace: {
+                    displacement_map_strength: 0.01, // Subtle default
+                    intensity: 0.5 // Modulator for strength
+                }
+                // Add other new effects' controls here as they are implemented
+            };
 
-        this.texPrevFrame = null; // Texture to hold the output of the previous full frame for feedback effects
+            this.texPrevFrame = null; // Texture to hold the output of the previous full frame for feedback effects
         this.fboPrevFrame = null; // FBO to render into texPrevFrame
     }
 
@@ -204,6 +220,9 @@ class VideoEngine {
                 finalPass: this.shaderManager.getFinalPassFragmentSource(),
                 datamosh: this.shaderManager.getDatamoshFragmentSource(), // Added new Datamosh shader
                 crt: this.shaderManager.getCRTFragmentSource(),           // Added new CRT shader
+                pixelsort: this.shaderManager.getPixelSortFragmentSource(), // Added PixelSort
+                feedback: this.shaderManager.getFeedbackFragmentSource(),   // Added Feedback
+                feedbackDisplace: this.shaderManager.getFeedbackDisplaceFragmentSource(), // Added FeedbackDisplace
             };
 
             for (const effectName in effectShaderSources) {
@@ -576,12 +595,9 @@ class VideoEngine {
                 // Bind textures: u_webcamTexture (current state) and u_previousFrameTexture
                 this.gl.activeTexture(this.gl.TEXTURE0);
                 this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the input from previous pass or base scene
-                const webcamTexLoc = this.gl.getUniformLocation(effectProgram, 'u_webcamTexture'); // Or a generic 'u_sourceTexture'
-                if (webcamTexLoc) this.gl.uniform1i(webcamTexLoc, 0);
-                else { // Fallback for older effects using u_texture
-                    const texLoc = this.gl.getUniformLocation(effectProgram, 'u_texture');
-                    if (texLoc) this.gl.uniform1i(texLoc, 0);
-                }
+                const sourceTexLoc = this.gl.getUniformLocation(effectProgram, 'u_sourceTexture');
+                if (sourceTexLoc) this.gl.uniform1i(sourceTexLoc, 0);
+                // No fallback needed now, all shaders should use u_sourceTexture for main input
 
 
                 if (this.texPrevFrame) { // Check if prevFrame texture is available
@@ -609,8 +625,30 @@ class VideoEngine {
             // No effects, currentReadTexture is still the base scene from fboA.
         }
 
-        // 2. Render the result (currentReadTexture) to the FinalPassShader (which might then go to screen or another FBO)
-        // For now, directly to screen using FinalPassShader
+        // NEW PLACEMENT: 3. Copy the result of the effect chain (currentReadTexture) to this.texPrevFrame
+        // This happens BEFORE FinalPassShader, so texPrevFrame stores the raw effect output.
+        if (this.fboPrevFrame && this.effectPrograms.passthrough && currentReadTexture) {
+            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboPrevFrame);
+            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            // No need to clear if we're overwriting fully with an opaque quad
+
+            this.gl.useProgram(this.effectPrograms.passthrough);
+            // Set minimal uniforms for passthrough (tex, opacity 1.0)
+            this.gl.activeTexture(this.gl.TEXTURE0);
+            this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // Output of effect chain
+            const passthroughTexLoc = this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_sourceTexture');
+            if (passthroughTexLoc) this.gl.uniform1i(passthroughTexLoc, 0);
+            this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
+
+            this.gl.disable(this.gl.BLEND); // Draw opaque
+            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
+            // Important: Leave this.fboPrevFrame bound if we are immediately going to use its texture.
+            // However, standard practice is to unbind after use. For texPrevFrame, it's now populated.
+            // The next frame will BIND this.texPrevFrame for reading.
+        }
+        // currentReadTexture still holds the output of the effect chain.
+
+        // 2. Render the result (currentReadTexture) to the screen (canvas) using FinalPassShader
         this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
         this.gl.clearColor(0, 0, 0, 1);
@@ -622,8 +660,8 @@ class VideoEngine {
         
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // This is the output of the effect chain
-        const finalTexLoc = this.gl.getUniformLocation(finalProgram, 'u_texture'); // FinalPass uses 'u_texture'
-        this.gl.uniform1i(finalTexLoc, 0);
+        const finalSourceTexLoc = this.gl.getUniformLocation(finalProgram, 'u_sourceTexture');
+        if (finalSourceTexLoc) this.gl.uniform1i(finalSourceTexLoc, 0);
 
         const finalOpacityLoc = this.gl.getUniformLocation(finalProgram, 'u_opacity');
         if(finalOpacityLoc) this.gl.uniform1f(finalOpacityLoc, this.masterOpacity);
@@ -632,30 +670,16 @@ class VideoEngine {
         this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
         this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
         this.gl.disable(this.gl.BLEND);
-
-        // 3. Copy the final rendered texture (currentReadTexture) to this.texPrevFrame for the NEXT frame
-        if (this.fboPrevFrame && this.effectPrograms.passthrough) {
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this.fboPrevFrame);
-            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-            // No need to clear if we're overwriting fully with an opaque quad
-
-            this.gl.useProgram(this.effectPrograms.passthrough);
-            // Set minimal uniforms for passthrough (tex, opacity 1.0)
-            this.gl.activeTexture(this.gl.TEXTURE0);
-            this.gl.bindTexture(this.gl.TEXTURE_2D, currentReadTexture); // The final image
-            this.gl.uniform1i(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_texture'), 0);
-            this.gl.uniform1f(this.gl.getUniformLocation(this.effectPrograms.passthrough, 'u_opacity'), 1.0);
-            // No global uniforms needed here unless passthrough shader uses them (it doesn't after recent changes)
-
-            this.gl.disable(this.gl.BLEND); // Draw opaque
-            this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4);
-            this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null); // Unbind
-        }
         
         // Render to output window if available
+        // The currentReadTexture passed here is the output of the effect chain (pre-FinalPass for main canvas)
+        // If outputCanvas also needs FinalPass applied, it should use finalProgram.
+        // The current call to renderToCanvas already passes finalProgram.
         if (this.outputGl && this.outputCanvas && budget.canRenderAllLayers) {
             this.renderToCanvas(this.outputGl, this.outputCanvas, currentReadTexture, finalProgram, time, audioData, beatData);
         }
+        // Unbind any FBOs at the very end if necessary, though binding to null (screen) does this for FRAMEBUFFER.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
     }
 
     // Helper to set global uniforms for a given program
@@ -714,14 +738,21 @@ class VideoEngine {
             gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteSoftness'), controls.vignetteSoftness);
             // CRT also has 'u_intensity' in its GLSL spec, but it's not used in the provided code.
             // If it were used, it would pick up the global 'u_intensity' from setGlobalUniforms.
+        } else if (effectName === 'pixelsort') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
+        } else if (effectName === 'feedback') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback_glowThreshold'), controls.feedback_glowThreshold);
+        } else if (effectName === 'feedbackDisplace') {
+            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement_map_strength'), controls.displacement_map_strength);
+            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
+            // This effect also uses global u_resolution, set by setGlobalUniforms
         }
-        // Add other new effects from the spec here...
-        // else if (effectName === 'pixelsort') {
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
-        //     gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
-        // }
     }
 
     renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
@@ -858,7 +889,8 @@ class VideoEngine {
 
             gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, layer.texture);
-            gl.uniform1i(gl.getUniformLocation(passthroughProgram, 'u_texture'), 0);
+            const sourceTexLoc = gl.getUniformLocation(passthroughProgram, 'u_sourceTexture');
+            if (sourceTexLoc) gl.uniform1i(sourceTexLoc, 0);
             gl.uniform1f(gl.getUniformLocation(passthroughProgram, 'u_opacity'), baseLayerOpacity);
 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

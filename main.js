@@ -97,6 +97,169 @@ if (typeof VJMixer === 'undefined') {
             window.vjMixer = this;
             
             console.log('VJ Mixer initialized');
+
+            // Setup listeners for new global shader controls
+            this.setupGlobalControlsListeners();
+            // Setup listeners for new effect-specific shader controls and panel visibility
+            this.setupEffectSpecificControlsListeners();
+        }
+
+        setupGlobalControlsListeners() {
+            const globalControlSliders = document.querySelectorAll('.global-control-slider'); // Matches HTML class
+
+            globalControlSliders.forEach(slider => {
+                const propertyName = slider.dataset.engineProperty;
+                const valueDisplaySpan = document.getElementById(`${slider.id.replace('-slider', '-value')}`);
+
+                if (!propertyName || !this.videoEngine || typeof this.videoEngine[propertyName] === 'undefined') {
+                    console.warn(`Global control slider for '${propertyName}' (ID: ${slider.id}) has no matching VideoEngine property or the property is undefined. Ensure VideoEngine has property '${propertyName}' and HTML element ID for value display is '${slider.id.replace('-slider', '-value')}'.`);
+                    return;
+                }
+
+                try {
+                    slider.value = this.videoEngine[propertyName];
+                    if (valueDisplaySpan) {
+                        let step = slider.step || "0.01"; // Default step for formatting if not set
+                        valueDisplaySpan.textContent = Number(slider.value).toFixed(step.includes('.') ? step.split('.')[1].length : 0);
+                    }
+                } catch (e) {
+                    console.error(`Error setting initial value for global control ${propertyName}:`, e);
+                }
+
+
+                slider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+
+                    if (this.videoEngine && typeof this.videoEngine[propertyName] !== 'undefined') {
+                        this.videoEngine[propertyName] = value;
+                    }
+
+                    if (valueDisplaySpan) {
+                        let step = slider.step || "0.01";
+                        let decimals = 0;
+                        if (step.includes('.')) {
+                            decimals = step.split('.')[1].length;
+                        } else if (parseFloat(step) === 0) { // step="any" or invalid might parse to 0 or NaN
+                            decimals = 2; // Default for "any"
+                        }
+                        valueDisplaySpan.textContent = value.toFixed(decimals);
+                    }
+                });
+            });
+        }
+
+        showSpecificControlsForEffect(effectNameToShow) {
+            document.querySelectorAll('.effect-specific-panel').forEach(panel => {
+                panel.style.display = 'none';
+            });
+
+            if (effectNameToShow) {
+                const panelId = `${effectNameToShow}-controls-panel`;
+                const activePanel = document.getElementById(panelId);
+                if (activePanel) {
+                    this.initializeEffectPanelSliders(effectNameToShow, activePanel);
+                    activePanel.style.display = 'block'; // Or 'grid', 'flex' based on CSS
+                } else {
+                    // console.warn(`Control panel not found for effect: ${effectNameToShow} (expected ID: ${panelId})`);
+                }
+            }
+        }
+
+        initializeEffectPanelSliders(effectName, panelElement) {
+            const sliders = panelElement.querySelectorAll('.effect-param-slider');
+            sliders.forEach(slider => {
+                const paramName = slider.dataset.param;
+                const valueDisplaySpan = document.getElementById(`${slider.id.replace('-slider', '-value')}`);
+
+                if (this.videoEngine &&
+                    this.videoEngine.effectControls &&
+                    this.videoEngine.effectControls[effectName] &&
+                    typeof this.videoEngine.effectControls[effectName][paramName] !== 'undefined') {
+
+                    slider.value = this.videoEngine.effectControls[effectName][paramName];
+                    if (valueDisplaySpan) {
+                        let step = slider.step || "0.01";
+                        let decimals = 0;
+                        if (step.includes('.')) { decimals = step.split('.')[1].length; }
+                        else if (parseFloat(step) === 0) { decimals = 2; }
+                        valueDisplaySpan.textContent = Number(slider.value).toFixed(decimals);
+                    }
+                } else {
+                    console.warn(`Cannot initialize slider for ${effectName}.${paramName} - control data not found in VideoEngine.effectControls.`);
+                }
+            });
+        }
+
+        setupEffectSpecificControlsListeners() {
+            const specificControlSliders = document.querySelectorAll('.effect-param-slider');
+
+            specificControlSliders.forEach(slider => {
+                const effectName = slider.dataset.effect;
+                const paramName = slider.dataset.param;
+                const valueDisplaySpan = document.getElementById(`${slider.id.replace('-slider', '-value')}`);
+
+                if (!effectName || !paramName ||
+                    !this.videoEngine || !this.videoEngine.effectControls || !this.videoEngine.effectControls[effectName] ||
+                    typeof this.videoEngine.effectControls[effectName][paramName] === 'undefined') {
+                    console.warn(`Specific control slider for ${effectName}.${paramName} (ID: ${slider.id}) has an issue or no matching VideoEngine control. Ensure effectControls are defined.`);
+                    return;
+                }
+
+                // Initial value is set by initializeEffectPanelSliders when panel is shown
+
+                slider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+
+                    if (this.videoEngine && this.videoEngine.effectControls[effectName]) {
+                        this.videoEngine.effectControls[effectName][paramName] = value;
+                    }
+
+                    if (valueDisplaySpan) {
+                        let step = slider.step || "0.01";
+                        let decimals = 0;
+                        if (step.includes('.')) { decimals = step.split('.')[1].length; }
+                        else if (parseFloat(step) === 0) { decimals = 2; }
+                        valueDisplaySpan.textContent = value.toFixed(decimals);
+                    }
+                    // console.log(`Set VideoEngine.effectControls.${effectName}.${paramName} = ${value}`);
+                });
+            });
+
+            // Add listeners to main effect buttons to toggle effects and show/hide specific control panels
+            const effectButtons = document.querySelectorAll('#effects-grid .effect-btn');
+            effectButtons.forEach(button => {
+                button.addEventListener('click', () => { // Using 'click' as it's more standard than 'mousedown' for toggles
+                    const effectName = button.dataset.effect;
+                    const wasActive = button.classList.contains('active');
+
+                    if (wasActive) {
+                        this.stopEffect(effectName); // Manages this.activeEffects and button class
+                        // If this was the effect whose panel was shown, hide all.
+                        // Or, if other effects are active, this could be smarter.
+                        // For now, simple hide if the deactivated one was shown.
+                        const panelId = `${effectName}-controls-panel`;
+                        const panel = document.getElementById(panelId);
+                        if (panel && panel.style.display !== 'none') {
+                           this.showSpecificControlsForEffect(null);
+                        }
+                    } else {
+                        // Before activating, if UI should only show one panel at a time for "new" effects,
+                        // and if the effect being activated is one of the "new" ones.
+                        // This logic might need refinement based on whether old and new effects can have panels simultaneously.
+                        // For now, assume activating any effect that *has* a panel should show it and hide others.
+                        this.startEffect(effectName); // Manages this.activeEffects and button class
+
+                        // Check if this effect has a specific panel to show
+                        const panelId = `${effectName}-controls-panel`;
+                        if (document.getElementById(panelId)) {
+                            this.showSpecificControlsForEffect(effectName);
+                        } else {
+                            // It's an old effect or one without specific UI panel, hide all specific panels.
+                            this.showSpecificControlsForEffect(null);
+                        }
+                    }
+                });
+            });
         }
         
         async waitForDependencies() {
@@ -827,8 +990,8 @@ if (typeof VJMixer === 'undefined') {
         }
         
         startEffect(effectName) {
-            this.videoEngine.enableEffect(effectName);
-            const effectBtn = document.querySelector(`[data-effect="${effectName}"]`);
+            // this.videoEngine.enableEffect(effectName); // Obsolete: VideoEngine now uses activeEffects Set
+            const effectBtn = document.querySelector(`#effects-grid [data-effect="${effectName}"]`); // More specific selector
             if (effectBtn) {
                 effectBtn.classList.add('active');
             }
@@ -838,11 +1001,12 @@ if (typeof VJMixer === 'undefined') {
             if (this.activeEffects.size > 1) {
                 this.showEffectCombination();
             }
+            // Panel visibility is handled by the click listener in setupEffectSpecificControlsListeners
         }
         
         stopEffect(effectName) {
-            this.videoEngine.disableEffect(effectName);
-            const effectBtn = document.querySelector(`[data-effect="${effectName}"]`);
+            // this.videoEngine.disableEffect(effectName); // Obsolete: VideoEngine now uses activeEffects Set
+            const effectBtn = document.querySelector(`#effects-grid [data-effect="${effectName}"]`); // More specific selector
             if (effectBtn) {
                 effectBtn.classList.remove('active');
             }
@@ -850,6 +1014,7 @@ if (typeof VJMixer === 'undefined') {
             
             // Hide effect combination indicator
             this.hideEffectCombination();
+            // Panel visibility is handled by the click listener in setupEffectSpecificControlsListeners
         }
         
         showEffectCombination() {
