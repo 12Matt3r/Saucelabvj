@@ -39,7 +39,9 @@ if (typeof VJMixer === 'undefined') {
             
             // Initialize managers
             this.assignmentManager = new AssignmentManager();
-            this.uiManager = new UIManager(this);
+            if (UIManager) { // Check if UIManager class is available
+                this.uiManager = new UIManager(this);
+            }
             this.patternManager = new PatternManager();
             
             // Initialize video engine with better error handling
@@ -47,6 +49,8 @@ if (typeof VJMixer === 'undefined') {
                 console.error('VideoEngine class not found. Check if video-engine.js loaded properly.');
                 this.uiManager.showNotification('VideoEngine not available. Some features may not work.', 'error', 10000);
                 return;
+            } else {
+                this.videoEngineEnabled = true; // Assume enabled unless init fails
             }
             
             this.videoEngine = new window.VideoEngine();
@@ -63,40 +67,54 @@ if (typeof VJMixer === 'undefined') {
             } catch (error) {
                 console.error('Failed to initialize video engine:', error);
                 this.uiManager.showNotification('WebGL initialization failed. Using fallback mode.', 'error', 10000);
-                this.videoEngineEnabled = false;
+                this.videoEngine = null; // Explicitly set to null on failure
+                this.videoEngineEnabled = false; // Indicate failure
             }
             
             // Initialize layer manager
-            this.layerManager = new LayerManager(this.videoEngine);
-            this.layerManager.init();
+            if (LayerManager && this.videoEngineEnabled && this.videoEngine) { // LayerManager depends on VideoEngine
+                this.layerManager = new LayerManager(this.videoEngine);
+                this.layerManager.init();
+            } else if (this.uiManager) {
+                 this.uiManager.showNotification('Layer management unavailable due to VideoEngine issues.', 'warning', 5000);
+            }
             
             // Initialize MIDI controller
-            this.midiController = new MIDIController();
-            await this.midiController.init();
-            this.midiController.onMIDIMessage = this.assignmentManager.handleMIDI.bind(this.assignmentManager);
+            if (MIDIController) {
+                this.midiController = new MIDIController();
+                try {
+                    await this.midiController.init();
+                    if (this.assignmentManager && this.midiController.onMIDIMessage) {
+                         this.midiController.onMIDIMessage = this.assignmentManager.handleMIDI.bind(this.assignmentManager);
+                    }
+                } catch (error) {
+                     console.warn('Failed to initialize MIDI Controller:', error);
+                     if (this.uiManager) {
+                        this.uiManager.showNotification('MIDI Controller not available.', 'warning', 5000);
+                     }
+                     this.midiController = null; // Explicitly set to null on failure
+                }
+            }
             
             // Initialize sequencer
-            this.sequencer = new Sequencer();
-            this.sequencer.onStepChange = this.handleSequencerStep.bind(this);
+            if (Sequencer) {
+                this.sequencer = new Sequencer();
+                this.sequencer.onStepChange = this.handleSequencerStep.bind(this);
+            }
             
             // Initialize performance monitor
-            this.performanceMonitor = new PerformanceMonitor(this.videoEngine);
-            this.performanceMonitor.start();
+            if (PerformanceMonitor && this.videoEngine) { // PerformanceMonitor depends on VideoEngine
+                this.performanceMonitor = new PerformanceMonitor(this.videoEngine);
+                this.performanceMonitor.start();
+            }
             
-            // Setup UI and event listeners
-            this.setupUI();
-            this.uiManager.setupEventListeners();
-            
-            // Load saved settings
-            this.loadSettings();
-            
-            // Setup auto-save
-            this.storage.setupAutoSave(() => this.saveSettings(), 10000);
-            
-            // Set global reference
-            window.vjMixer = this;
-            
-            console.log('VJ Mixer initialized');
+            // Setup UI and event listeners - Only if UIManager is available
+            if (this.uiManager) {
+                this.setupUI();
+                this.uiManager.setupEventListeners();
+            } else {
+                 console.warn('UI Manager not initialized. UI setup skipped.');
+            }
 
             // Setup listeners for new global shader controls
             this.setupGlobalControlsListeners();
@@ -159,7 +177,7 @@ if (typeof VJMixer === 'undefined') {
                 if (activePanel) {
                     this.initializeEffectPanelSliders(effectNameToShow, activePanel);
                     activePanel.style.display = 'block'; // Or 'grid', 'flex' based on CSS
-                } else {
+                } // else {
                     // console.warn(`Control panel not found for effect: ${effectNameToShow} (expected ID: ${panelId})`);
                 }
             }
@@ -230,19 +248,29 @@ if (typeof VJMixer === 'undefined') {
             effectButtons.forEach(button => {
                 button.addEventListener('click', () => { // Using 'click' as it's more standard than 'mousedown' for toggles
                     const effectName = button.dataset.effect;
+                    // Check if the button currently has the 'active' class
                     const wasActive = button.classList.contains('active');
 
                     if (wasActive) {
                         this.stopEffect(effectName); // Manages this.activeEffects and button class
-                        // If this was the effect whose panel was shown, hide all.
-                        // Or, if other effects are active, this could be smarter.
-                        // For now, simple hide if the deactivated one was shown.
+                        
+                        // --- Effect Panel Visibility Logic ---
+                        // When an active effect button is clicked (to deactivate it),
+                        // check if its corresponding control panel was visible.
                         const panelId = `${effectName}-controls-panel`;
                         const panel = document.getElementById(panelId);
+                        // If the panel exists and was visible, hide all effect-specific panels.
+                        // This is the current behavior: toggling off an effect hides its panel
+                        // and any other effect panels that might have been open (though currently only one can be open).
                         if (panel && panel.style.display !== 'none') {
                            this.showSpecificControlsForEffect(null);
                         }
+                        // Note: To allow multiple panels to remain open when an effect is deactivated,
+                        // you would remove this 'if' block and the following call to showSpecificControlsForEffect(null).
+                        // You would instead potentially add logic in stopEffect or elsewhere to manage panel visibility
+                        // if you wanted panels to persist regardless of button state.
                     } else {
+                        // When an inactive effect button is clicked (to activate it),
                         // Before activating, if UI should only show one panel at a time for "new" effects,
                         // and if the effect being activated is one of the "new" ones.
                         // This logic might need refinement based on whether old and new effects can have panels simultaneously.
@@ -250,17 +278,37 @@ if (typeof VJMixer === 'undefined') {
                         this.startEffect(effectName); // Manages this.activeEffects and button class
 
                         // Check if this effect has a specific panel to show
+                        // This is the current behavior: if the activated effect has a dedicated panel,
+                        // show ONLY that panel and hide all others.
                         const panelId = `${effectName}-controls-panel`;
                         if (document.getElementById(panelId)) {
                             this.showSpecificControlsForEffect(effectName);
                         } else {
+                            // If the activated effect does NOT have a dedicated panel,
                             // It's an old effect or one without specific UI panel, hide all specific panels.
+                            // This ensures clicking an effect without a panel still clears other panels.
                             this.showSpecificControlsForEffect(null);
+                        }
+                        // Note: To allow multiple panels to be open simultaneously (if an effect has a panel),
+                        // you would modify the showSpecificControlsForEffect method so it doesn't hide all panels first.
+                        // Then, here, you would simply call showSpecificControlsForEffect(effectName) if the panel exists,
+                        // without the 'else' block that hides all panels.
                         }
                     }
                 });
             });
         }
+
+        // Initial load of settings after core components are ready
+        // Moved outside of async init to ensure managers are assigned, even if init partially fails
+        async postInitSetup() {
+             // Load saved settings
+            this.loadSettings();
+            
+            // Setup auto-save
+            if (this.storage) {
+                this.storage.setupAutoSave(() => this.saveSettings(), 10000);
+            }
         
         async waitForDependencies() {
             // Wait for all required classes to be available
@@ -550,10 +598,15 @@ if (typeof VJMixer === 'undefined') {
         }
         
         startEnhancedPerformanceDisplay() {
+             if (!this.videoEngine) {
+                console.warn('VideoEngine not available for enhanced performance display.');
+                return;
+            }
             setInterval(() => {
                 if (this.videoEngine) {
                     const stats = this.videoEngine.getPerformanceStats();
                     
+
                     // Enhanced FPS display
                     const fpsDisplay = document.getElementById('fps-display');
                     if (fpsDisplay) {
@@ -730,7 +783,7 @@ if (typeof VJMixer === 'undefined') {
         }
         
         toggleAutoCrossfade(enabled) {
-            this.autoCrossfadeEnabled = enabled;
+            if (this.videoEngine) this.autoCrossfadeEnabled = enabled;
             if (enabled) {
                 this.startAutoCrossfade();
                 this.uiManager.showNotification('Auto-crossfade enabled', 'info');
@@ -762,7 +815,7 @@ if (typeof VJMixer === 'undefined') {
         }
         
         toggleBeatEffects(enabled) {
-            this.beatEffectsEnabled = enabled;
+            if (this.videoEngine) this.beatEffectsEnabled = enabled;
             if (enabled) {
                 this.startBeatEffects();
                 this.uiManager.showNotification('Beat-reactive effects enabled', 'info');
@@ -816,10 +869,14 @@ if (typeof VJMixer === 'undefined') {
         }
         
         setupPerformanceMonitor() {
+            if (!this.videoEngine || !this.layerManager) {
+                 console.warn('VideoEngine or LayerManager not available for performance monitor setup.');
+                 return;
+            }
             const monitor = document.createElement('div');
             monitor.id = 'performance-monitor';
             monitor.innerHTML = `
-                <div class="fps-counter">FPS: <span id="fps-value">0</span></div>
+                <div class="fps-counter">FPS: <span id="fps-value">--</span></div>
                 <div class="layer-count">Active: <span id="active-layers">0</span></div>
             `;
             document.getElementById('header').appendChild(monitor);
@@ -834,6 +891,10 @@ if (typeof VJMixer === 'undefined') {
         }
         
         setupAdvancedPerformanceMonitor() {
+             if (!this.videoEngine) {
+                 console.warn('VideoEngine not available for advanced performance monitor setup.');
+                 return;
+            }
             const monitor = document.getElementById('performance-monitor');
             if (!monitor) {
                 console.warn('Performance monitor element not found');
@@ -860,7 +921,7 @@ if (typeof VJMixer === 'undefined') {
             if (canvas) {
                 canvas.addEventListener('webglcontextlost', (e) => {
                     e.preventDefault();
-                    this.uiManager.showNotification('WebGL context lost - attempting recovery', 'error');
+                    if (this.uiManager) this.uiManager.showNotification('WebGL context lost - attempting recovery', 'error');
                     this.handleContextLoss();
                 });
                 
@@ -878,6 +939,10 @@ if (typeof VJMixer === 'undefined') {
         
         updatePerformanceMetrics() {
             try {
+                 if (!this.videoEngine || !this.layerManager) {
+                     console.warn('VideoEngine or LayerManager not available for performance metrics update.');
+                     return;
+                }
                 // Enhanced performance monitoring with video engine stats
                 if (this.videoEngine) {
                     const stats = this.videoEngine.getPerformanceStats();
@@ -945,7 +1010,8 @@ if (typeof VJMixer === 'undefined') {
         
         handleContextLoss() {
             // Pause all videos to conserve resources
-            this.layerManager.layers.forEach(layer => {
+            if (this.layerManager) {
+                 this.layerManager.layers.forEach(layer => {
                 if (layer.video) {
                     layer.video.pause();
                 }
@@ -953,7 +1019,7 @@ if (typeof VJMixer === 'undefined') {
             
             // Clear effects to reduce GPU load
             this.clearAllEffects();
-            
+
             // Show loading overlay
             this.showLoadingOverlay('Recovering WebGL context...');
             
@@ -982,14 +1048,18 @@ if (typeof VJMixer === 'undefined') {
         }
         
         restoreVideoPlayback() {
-            this.layerManager.layers.forEach(layer => {
-                if (layer.video && layer.opacity > 0) {
-                    layer.video.play().catch(console.warn);
-                }
-            });
+             if (this.layerManager) {
+                 this.layerManager.layers.forEach(layer => {
+                    if (layer.video && layer.opacity > 0) {
+                        layer.video.play().catch(console.warn);
+                    }
+                });
+            }
         }
         
         startEffect(effectName) {
+             if (!this.videoEngine) return; // Effects depend on VideoEngine
+
             // this.videoEngine.enableEffect(effectName); // Obsolete: VideoEngine now uses activeEffects Set
             const effectBtn = document.querySelector(`#effects-grid [data-effect="${effectName}"]`); // More specific selector
             if (effectBtn) {
@@ -1005,7 +1075,9 @@ if (typeof VJMixer === 'undefined') {
         }
         
         stopEffect(effectName) {
-            // this.videoEngine.disableEffect(effectName); // Obsolete: VideoEngine now uses activeEffects Set
+             if (!this.videoEngine) return; // Effects depend on VideoEngine
+
+             // this.videoEngine.disableEffect(effectName); // Obsolete: VideoEngine now uses activeEffects Set
             const effectBtn = document.querySelector(`#effects-grid [data-effect="${effectName}"]`); // More specific selector
             if (effectBtn) {
                 effectBtn.classList.remove('active');
@@ -1044,7 +1116,6 @@ if (typeof VJMixer === 'undefined') {
             this.activeEffects.forEach(effect => {
                 this.stopEffect(effect);
             });
-            this.videoEngine.clearEffects();
         }
         
         toggleSequencerStep(step) {
@@ -1054,12 +1125,18 @@ if (typeof VJMixer === 'undefined') {
             if (isActive) {
                 stepElement.classList.remove('active');
                 this.sequencer.clearStep(step);
+                 // Optionally clear recorded data for this step in PatternManager if recording is off
+                 if (this.patternManager && !this.patternManager.isRecording) {
+                    // patternManager might need a method like clearRecordedStep(step)
+                 }
             } else {
+                 if (!this.sequencer || !this.layerManager) return; // Depend on Sequencer and LayerManager
+
                 stepElement.classList.add('active');
                 this.sequencer.setStep(step, { layer: this.layerManager.currentLayer });
             }
         }
-        
+
         handleSequencerStep(step, data) {
             // Record pattern if recording mode is active
             if (this.patternManager.isRecording) {
@@ -1097,11 +1174,15 @@ if (typeof VJMixer === 'undefined') {
                 // Apply recorded opacity if available
                 if (data.opacity !== undefined) {
                     this.layerManager.setLayerOpacity(data.layer, data.opacity);
+                    
+                    // Update UI element for opacity if UIManager exists and the method exists there
+                    // This requires UIManager to have an updateOpacitySlider method
+                    if (this.uiManager) this.uiManager.updateOpacitySlider(data.opacity);
                 }
                 
                 // Enhanced visual feedback
                 const activeLayer = this.layerManager.layers[data.layer].element;
-                activeLayer.classList.add('step-triggered');
+                 if (activeLayer) activeLayer.classList.add('step-triggered');
                 setTimeout(() => activeLayer.classList.remove('step-triggered'), 200);
             }
         }
@@ -1136,7 +1217,7 @@ if (typeof VJMixer === 'undefined') {
         }
         
         saveSettings() {
-            try {
+            try { // Wrap saving logic in a try-catch
                 const settings = {
                     layers: this.layerManager.layers.map(layer => ({
                         opacity: layer.opacity,
@@ -1147,7 +1228,7 @@ if (typeof VJMixer === 'undefined') {
                     assignments: this.assignmentManager.getAssignments(),
                     patterns: this.patternManager.getPatterns(),
                     bpm: this.sequencer.bpm,
-                    sequencerSteps: this.sequencer.steps
+                    sequencerSteps: this.sequencer.steps // Ensure this is safe to serialize
                 };
                 
                 this.storage.save(settings);
@@ -1178,38 +1259,76 @@ if (typeof VJMixer === 'undefined') {
         //     //     setTimeout(() => indicator.classList.remove('visible'), 1000);
         //     // }
         // }
-        
+
         loadSettings() {
             try {
+                if (!this.storage) {
+                    console.warn('Storage not available. Cannot load settings.');
+                    return;
+                }
                 const settings = this.storage.load(); // Attempt to load settings
-                
-                if (settings) {
+
+                // Basic check if settings is a non-null object
+                if (settings && typeof settings === 'object') {
                     console.log('Applying loaded settings...');
-                    // It's good practice to also wrap the application of settings in a try-catch
-                    // in case the settings data is valid JSON but has unexpected structure.
+
                     try {
                         // Restore BPM
-                        if (typeof settings.bpm === 'number') {
+                        if (this.sequencer && typeof settings.bpm === 'number' && !isNaN(settings.bpm)) {
                             this.sequencer.setBPM(settings.bpm);
                             const bpmInput = document.getElementById('bpm-input');
                             if (bpmInput) {
                                 bpmInput.value = settings.bpm;
                             }
+                        } else if (settings.bpm !== undefined) {
+                            console.warn('Invalid or missing BPM data in settings:', settings.bpm);
                         }
+
+                        // Restore sequencer steps
+                        if (this.sequencer && Array.isArray(settings.sequencerSteps)) {
+                            // Basic validation of steps array content (e.g., check for objects with expected properties)
+                            const validSteps = settings.sequencerSteps.filter(step =>
+                                step === null || (typeof step === 'object' && step !== null && step.layer !== undefined)
+                            );
+                            this.sequencer.steps = validSteps.slice(0, 8); // Ensure only 8 steps are loaded
+                            // Optionally update UI based on loaded steps here or in Sequencer/UIManager
+                        } else if (settings.sequencerSteps !== undefined) {
+                            console.warn('Invalid or missing sequencerSteps data in settings:', settings.sequencerSteps);
+ }
+                        // Update sequencer UI based on loaded steps
+                        if (this.sequencer && this.sequencer.steps) {
+ this.updateSequencerUI();
+                        }
+
 
                         // Restore assignments
                         if (typeof settings.assignments === 'object' && settings.assignments !== null) {
-                            this.assignmentManager.setAssignments(settings.assignments);
+                             if (this.assignmentManager) {
+                                this.assignmentManager.setAssignments(settings.assignments);
+                            } else {
+                                 console.warn('AssignmentManager not available to load assignments.');
+                            }
                         }
 
                         // Restore patterns
                         if (typeof settings.patterns === 'object' && settings.patterns !== null) {
-                            this.patternManager.setPatterns(settings.patterns);
+                            if (this.patternManager) {
+                                this.patternManager.setPatterns(settings.patterns);
+                            } else {
+                                console.warn('PatternManager not available to load patterns.');
+                            }
                         }
 
                         // Restore layers (example - assuming layer data needs careful application)
                         if (Array.isArray(settings.layers)) {
-                            // this.layerManager.loadLayerSettings(settings.layers); // Hypothetical method
+                             if (this.layerManager) {
+                                // LayerManager needs a method like loadLayers(layerData)
+                                // that handles validation and application of each layer's settings.
+                                console.warn('LayerManager needs a specific method to load layer settings from data.');
+                             } else {
+                                console.warn('LayerManager not available to load layer settings.');
+                            }
+                        } else if (settings.layers !== undefined) {
                             console.log('Layer settings found, ensure LayerManager handles this restore.');
                         }
 
@@ -1240,24 +1359,37 @@ if (typeof VJMixer === 'undefined') {
         }
         
         reset() {
-            // Stop sequencer
-            this.sequencer.stop();
-            
+            // Stop sequencer if available
+            if (this.sequencer) {
+                this.sequencer.stop();
+            } else {
+                 console.warn('Sequencer not available to stop during reset.');
+            }
+
             // Reset layers
-            this.layerManager.reset();
-            
+            if (this.layerManager) {
+                this.layerManager.reset();
+            } else {
+                 console.warn('LayerManager not available to reset.');
+            }
+
             // Clear effects
             this.clearAllEffects();
-            document.querySelectorAll('.effect-btn.active').forEach(btn => {
+             // Reset effect UI buttons
+            document.querySelectorAll('#effects-grid .effect-btn.active').forEach(btn => {
                 btn.classList.remove('active');
             });
-            
+
             // Clear assignments
-            this.assignmentManager.clear();
-            
+            if (this.assignmentManager) {
+                this.assignmentManager.clear();
+            } else {
+                 console.warn('AssignmentManager not available to clear assignments.');
+            }
             console.log('VJ Mixer reset');
         }
-        
+
+
         emergencyStop() {
             // Enhanced emergency stop with better feedback
             this.uiManager.showNotification('Emergency stop activated', 'warning', 5000);
@@ -1268,7 +1400,9 @@ if (typeof VJMixer === 'undefined') {
             });
             
             // Stop sequencer
-            this.sequencer.stop();
+            if (this.sequencer) {
+                this.sequencer.stop();
+            }
             
             // Clear all effects
             this.clearAllEffects();
@@ -1306,6 +1440,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!window.vjMixer) {
             console.log('Starting VJ Mixer initialization...');
             const vjMixer = new VJMixer();
+                 window.vjMixer = vjMixer; // Set global reference early
             await vjMixer.init();
         }
     } catch (error) {

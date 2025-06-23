@@ -71,10 +71,22 @@ class PatternManager {
     }
     
     applyPatternToSequencer() {
+        // Ensure recordedPatterns is a Map before iterating
+ if (!(this.recordedPatterns instanceof Map)) {
+ console.warn('recordedPatterns is not a Map. Cannot apply pattern.');
+ return;
+ }
+
         for (let i = 0; i < 8; i++) {
-            const stepElement = document.querySelector(`[data-step="${i}"]`);
             const patternData = this.recordedPatterns.get(i);
+            const stepElement = document.querySelector(`.sequencer-step[data-step="${i}"]`); // Added class selector for specificity
+
+            // Validate patternData structure if it exists for this step
+ if (patternData && (typeof patternData.layer !== 'number' || isNaN(patternData.layer) || typeof patternData.opacity !== 'number' || isNaN(patternData.opacity))) {
+ console.warn(`Invalid pattern data for step ${i}:`, patternData);
             
+            // Explicitly check if the step element exists before trying to modify its class or interact with it
+
             if (stepElement) {
                 if (patternData) {
                     stepElement.classList.add('pattern-recorded');
@@ -92,9 +104,16 @@ class PatternManager {
     }
     
     clearPattern() {
+        // Select all sequencer step elements
+ const stepElements = document.querySelectorAll('.sequencer-step');
+
+        // Explicitly check if stepElements NodeList is not null before iterating
         this.recordedPatterns.clear();
-        document.querySelectorAll('.sequencer-step').forEach(step => {
-            step.classList.remove('pattern-recorded');
+
+        // Ensure stepElements is a NodeList before iterating
+ if (stepElements instanceof NodeList) {
+        if (stepElements) {
+            stepElements.forEach(step => step.classList.remove('pattern-recorded'));
         });
         
         if (window.vjMixer && window.vjMixer.uiManager) {
@@ -126,6 +145,8 @@ class PatternManager {
     
     updateUI() {
         const btn = document.getElementById('record-pattern-btn');
+        
+        // Explicitly check if the button element exists before trying to modify its class or innerHTML
         if (btn) {
             if (this.isRecording) {
                 btn.classList.add('recording');
@@ -145,11 +166,27 @@ class PatternManager {
     }
     
     setPatterns(patterns) {
+        // Validate the structure of the loaded patterns object
+ if (!patterns || typeof patterns !== 'object') {
+ console.warn('Attempted to set patterns with invalid data:', patterns);
+ return;
+ }
+
         if (patterns.current) {
+            // Ensure patterns.current is an array before attempting to create a Map
+ if (Array.isArray(patterns.current)) {
             this.recordedPatterns = new Map(patterns.current);
+            } else {
+ console.warn('patterns.current is not an array. Cannot set recorded patterns.');
+            }
         }
         if (patterns.slots) {
+            // Ensure patterns.slots is an array before attempting to create a Map
+ if (Array.isArray(patterns.slots)) {
             this.patternSlots = new Map(patterns.slots);
+            } else {
+ console.warn('patterns.slots is not an array. Cannot set pattern slots.');
+            }
         }
     }
 }

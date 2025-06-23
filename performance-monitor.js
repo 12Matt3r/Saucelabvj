@@ -58,7 +58,10 @@ class PerformanceMonitor {
     updateMetrics() {
         try {
             // FPS monitoring
-            const currentFPS = this.videoEngine ? this.videoEngine.getFPS() : 0;
+            let currentFPS = 0;
+            if (this.videoEngine) {
+ currentFPS = this.videoEngine.getFPS();
+            }
             this.metrics.fps = currentFPS;
             
             const fpsElement = document.getElementById('fps-value');
@@ -100,11 +103,15 @@ class PerformanceMonitor {
             }
             
             // Active layer count
-            if (window.vjMixer && window.vjMixer.layerManager) {
+            if (window.vjMixer && window.vjMixer.layerManager && window.vjMixer.layerManager.layers) {
                 const activeLayers = window.vjMixer.layerManager.layers.filter(l => l.opacity > 0 && l.video).length;
                 this.metrics.activeLayers = activeLayers;
                 
                 const activeLayersElement = document.getElementById('active-layers');
+                // Check if the element exists before accessing textContent
+                if (!activeLayersElement) {
+                    console.warn("Performance monitor element 'active-layers' not found.");
+                }
                 if (activeLayersElement) {
                     activeLayersElement.textContent = activeLayers;
                 }

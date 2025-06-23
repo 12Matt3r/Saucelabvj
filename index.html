@@ -71,6 +71,162 @@
                         <button class="effect-btn assignable touch-control" data-effect="strobe" title="Strobe light">STROBE</button>
                     </div>
                 </div>
+
+                <!-- Global Shader Controls Panel -->
+                <div id="global-shader-controls-panel" class="control-panel modern-panel">
+                    <h3>🌎 Global Shader Controls</h3>
+                    <div class="controls-grid">
+                        <div class="control-item">
+                            <label for="brightness-control">Brightness:</label>
+                            <input type="range" id="brightness-control" class="global-control-slider touch-control" data-engine-property="brightness" min="0.5" max="1.5" step="0.01" value="1.0">
+                            <span class="control-value">1.00</span> <!-- Assuming VideoEngine default is 1.0 -->
+                        </div>
+                        <div class="control-item">
+                            <label for="contrast-control">Contrast:</label>
+                            <input type="range" id="contrast-control" class="global-control-slider touch-control" data-engine-property="contrast" min="0.5" max="1.5" step="0.01" value="1.0">
+                            <span class="control-value">1.00</span> <!-- Assuming VideoEngine default is 1.0 -->
+                        </div>
+                        <div class="control-item">
+                            <label for="saturation-control">Saturation:</label>
+                            <input type="range" id="saturation-control" class="global-control-slider touch-control" data-engine-property="saturation" min="0.0" max="2.0" step="0.01" value="1.0">
+                            <span class="control-value">1.00</span>
+                        </div>
+                        <div class="control-item">
+                            <label for="intensity-control">Intensity:</label>
+                            <input type="range" id="intensity-control" class="global-control-slider touch-control" data-engine-property="intensity" min="0.0" max="1.0" step="0.01" value="0.0">
+                            <span class="control-value">0.00</span> <!-- Assuming VideoEngine default is 0.0 -->
+                        </div>
+                        <div class="control-item">
+                            <label for="motionThreshold-control">Motion Threshold:</label>
+                            <input type="range" id="motionThreshold-control" class="global-control-slider touch-control" data-engine-property="motionThreshold" min="0.0" max="1.0" step="0.01" value="0.1">
+                            <span class="control-value">0.10</span>
+                        </div>
+                        <div class="control-item">
+                            <label for="trailPersistence-control">Trail Persistence:</label>
+                            <input type="range" id="trailPersistence-control" class="global-control-slider touch-control" data-engine-property="trailPersistence" min="0.0" max="1.0" step="0.01" value="0.0">
+                            <span class="control-value">0.00</span>
+                        </div>
+                         <div class="control-item">
+                            <label for="hueShiftSpeed-control">Hue Shift Speed:</label>
+                            <input type="range" id="hueShiftSpeed-control" class="global-control-slider touch-control" data-engine-property="hueShiftSpeed" min="0.0" max="0.1" step="0.001" value="0.0">
+                            <span class="control-value">0.000</span> <!-- Assuming VideoEngine default is 0.0 -->
+                        </div>
+                         <div class="control-item">
+                            <label for="motionExtrapolation-control">Motion Extrapolation:</label>
+                            <input type="range" id="motionExtrapolation-control" class="global-control-slider touch-control" data-engine-property="motionExtrapolation" min="0.0" max="1.0" step="0.01" value="0.0">
+                            <span class="control-value">0.00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Effect-Specific Control Panels Container -->
+                <div id="effect-specific-controls-container">
+                    <!-- Individual effect panels will be inserted here by JavaScript -->
+                    <div id="datamosh-controls-panel" class="effect-specific-panel modern-panel" style="display:none;">
+                        <h3>Datamosh Controls</h3>
+                        <div class="controls-grid">
+                            <div class="control-item">
+                                <label for="datamosh-intensity-control">Intensity:</label>
+                                <input type="range" id="datamosh-intensity-control" class="effect-param-slider touch-control" data-effect="datamosh" data-param="intensity" min="0.0" max="1.0" step="0.01" value="0.5">
+                                <span class="control-value">0.50</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="datamosh-displacement-control">Displacement:</label>
+                                <input type="range" id="datamosh-displacement-control" class="effect-param-slider touch-control" data-effect="datamosh" data-param="displacement" min="0.0" max="0.1" step="0.001" value="0.01">
+                                <span class="control-value">0.010</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="datamosh-feedback-control">Feedback:</label>
+                                <input type="range" id="datamosh-feedback-control" class="effect-param-slider touch-control" data-effect="datamosh" data-param="feedback" min="0.0" max="1.0" step="0.01" value="0.9">
+                                <span class="control-value">0.90</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="crt-controls-panel" class="effect-specific-panel modern-panel" style="display:none;">
+                        <h3>CRT Controls</h3>
+                        <div class="controls-grid">
+                            <div class="control-item">
+                                <label for="crt-scanlineintensity-control">Scanline Intensity:</label>
+                                <input type="range" id="crt-scanlineintensity-control" class="effect-param-slider touch-control" data-effect="crt" data-param="scanlineIntensity" min="0.0" max="1.0" step="0.01" value="0.3">
+                                <span class="control-value">0.30</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="crt-scanlinedensity-control">Scanline Density:</label>
+                                <input type="range" id="crt-scanlinedensity-control" class="effect-param-slider touch-control" data-effect="crt" data-param="scanlineDensity" min="0.0" max="2.0" step="0.01" value="1.0">
+                                <span class="control-value">1.00</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="crt-curvatureamount-control">Curvature Amount:</label>
+                                <input type="range" id="crt-curvatureamount-control" class="effect-param-slider touch-control" data-effect="crt" data-param="curvatureAmount" min="0.0" max="1.0" step="0.01" value="0.05">
+                                <span class="control-value">0.05</span>
+                            </div>
+                             <div class="control-item">
+                                <label for="crt-phosphoroffset-control">Phosphor Offset:</label>
+                                <input type="range" id="crt-phosphoroffset-control" class="effect-param-slider touch-control" data-effect="crt" data-param="phosphorOffset" min="0.0" max="1.0" step="0.01" value="0.1">
+                                <span class="control-value">0.10</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="crt-vignettestrength-control">Vignette Strength:</label>
+                                <input type="range" id="crt-vignettestrength-control" class="effect-param-slider touch-control" data-effect="crt" data-param="vignetteStrength" min="0.0" max="1.0" step="0.01" value="0.5">
+                                <span class="control-value">0.50</span>
+                            </div>
+                             <div class="control-item">
+                                <label for="crt-vignettesoftness-control">Vignette Softness:</label>
+                                <input type="range" id="crt-vignettesoftness-control" class="effect-param-slider touch-control" data-effect="crt" data-param="vignetteSoftness" min="0.0" max="1.0" step="0.01" value="0.5">
+                                <span class="control-value">0.50</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="pixelsort-controls-panel" class="effect-specific-panel modern-panel" style="display:none;">
+                        <h3>PixelSort Controls</h3>
+                        <div class="controls-grid">
+                            <div class="control-item">
+                                <label for="pixelsort-threshold-control">Threshold:</label>
+                                <input type="range" id="pixelsort-threshold-control" class="effect-param-slider touch-control" data-effect="pixelSort" data-param="threshold" min="0.0" max="1.0" step="0.01" value="0.5">
+                                <span class="control-value">0.50</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="feedback-controls-panel" class="effect-specific-panel modern-panel" style="display:none;">
+                        <h3>Feedback Controls</h3>
+                        <div class="controls-grid">
+                            <div class="control-item">
+                                <label for="feedback-intensity-control">Intensity:</label>
+                                <input type="range" id="feedback-intensity-control" class="effect-param-slider touch-control" data-effect="feedback" data-param="intensity" min="0.0" max="1.0" step="0.01" value="0.95">
+                                <span class="control-value">0.95</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="feedback-displacement-control">Displacement:</label>
+                                <input type="range" id="feedback-displacement-control" class="effect-param-slider touch-control" data-effect="feedback" data-param="displacement" min="0.0" max="0.1" step="0.001" value="0.01">
+                                <span class="control-value">0.010</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="feedback-feedback-control">Feedback:</label>
+                                <input type="range" id="feedback-feedback-control" class="effect-param-slider touch-control" data-effect="feedback" data-param="feedback" min="0.0" max="1.0" step="0.01" value="0.9">
+                                <span class="control-value">0.90</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                     <div id="feedbackdisplace-controls-panel" class="effect-specific-panel modern-panel" style="display:none;">
+                        <h3>Feedback Displace Controls</h3>
+                        <div class="controls-grid">
+                            <div class="control-item">
+                                <label for="feedbackdisplace-intensity-control">Intensity:</label>
+                                <input type="range" id="feedbackdisplace-intensity-control" class="effect-param-slider touch-control" data-effect="feedbackDisplace" data-param="intensity" min="0.0" max="1.0" step="0.01" value="0.5">
+                                <span class="control-value">0.50</span>
+                            </div>
+                            <div class="control-item">
+                                <label for="feedbackdisplace-displacement_map_strength-control">Displacement Map Strength:</label>
+                                <input type="range" id="feedbackdisplace-speed-control" class="effect-param-slider touch-control" data-effect="feedbackDisplace" data-param="speed" min="0.0" max="1.0" step="0.01" value="0.2">
+                                <span class="control-value">0.20</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Enhanced Sequencer -->

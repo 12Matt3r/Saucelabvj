@@ -1,4 +1,4 @@
-class VideoEngine {
+1class VideoEngine {
     constructor() {
         this.canvas = null;
         this.gl = null;
@@ -27,6 +27,7 @@ class VideoEngine {
         this.fboB = null;
         this.texB = null;
         this.effectPrograms = {}; // To cache compiled effect programs
+        this.vertexBuffer = null; // Added to store vertex buffer for disposal
         this.qualityMode = 'auto';
         this.adaptiveQuality = 1.0;
         this.lastRenderTime = 0;
@@ -338,6 +339,7 @@ class VideoEngine {
             if (!buffer) {
                 throw new Error('Failed to create vertex buffer');
             }
+            this.vertexBuffer = buffer; // Store the reference
             
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
             this.gl.bufferData(this.gl.ARRAY_BUFFER, vertices, this.gl.STATIC_DRAW);
@@ -687,13 +689,23 @@ class VideoEngine {
         const gl = this.gl;
         gl.uniform1f(gl.getUniformLocation(program, 'u_time'), time);
         gl.uniform2f(gl.getUniformLocation(program, 'u_resolution'), this.canvas.width, this.canvas.height);
+        
+        // Add console.warn if uniform location is null or -1
+        const timeLoc = gl.getUniformLocation(program, 'u_time');
+        if (timeLoc === null || timeLoc === -1) console.warn(`Uniform 'u_time' not found in program:`, program);
+        const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+        if (resolutionLoc === null || resolutionLoc === -1) console.warn(`Uniform 'u_resolution' not found in program:`, program);
 
         // Audio uniforms (for old effects and potentially new ones if they use these names)
         if (audioData && beatData) {
             gl.uniform1f(gl.getUniformLocation(program, 'u_beat'), beatData.beat);
+            if (gl.getUniformLocation(program, 'u_beat') === null || gl.getUniformLocation(program, 'u_beat') === -1) console.warn(`Uniform 'u_beat' not found in program:`, program);
             gl.uniform1f(gl.getUniformLocation(program, 'u_bassLevel'), beatData.bassLevel);
+            if (gl.getUniformLocation(program, 'u_bassLevel') === null || gl.getUniformLocation(program, 'u_bassLevel') === -1) console.warn(`Uniform 'u_bassLevel' not found in program:`, program);
             gl.uniform1f(gl.getUniformLocation(program, 'u_trebleLevel'), beatData.trebleLevel);
+            if (gl.getUniformLocation(program, 'u_trebleLevel') === null || gl.getUniformLocation(program, 'u_trebleLevel') === -1) console.warn(`Uniform 'u_trebleLevel' not found in program:`, program);
             gl.uniform1f(gl.getUniformLocation(program, 'u_audioEnergy'), audioData.energy);
+            if (gl.getUniformLocation(program, 'u_audioEnergy') === null || gl.getUniformLocation(program, 'u_audioEnergy') === -1) console.warn(`Uniform 'u_audioEnergy' not found in program:`, program);
             gl.uniform3f(gl.getUniformLocation(program, 'u_audioFrequencies'), audioData.bass, audioData.mid, audioData.treble);
         }
 
@@ -701,12 +713,20 @@ class VideoEngine {
         // Shaders must declare these if they use them.
         gl.uniform1f(gl.getUniformLocation(program, 'u_brightness'), this.brightness);
         gl.uniform1f(gl.getUniformLocation(program, 'u_contrast'), this.contrast);
+        if (gl.getUniformLocation(program, 'u_brightness') === null || gl.getUniformLocation(program, 'u_brightness') === -1) console.warn(`Uniform 'u_brightness' not found in program:`, program);
+        if (gl.getUniformLocation(program, 'u_contrast') === null || gl.getUniformLocation(program, 'u_contrast') === -1) console.warn(`Uniform 'u_contrast' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_saturation'), this.saturation);
+        if (gl.getUniformLocation(program, 'u_saturation') === null || gl.getUniformLocation(program, 'u_saturation') === -1) console.warn(`Uniform 'u_saturation' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_motionThreshold'), this.motionThreshold);
+        if (gl.getUniformLocation(program, 'u_motionThreshold') === null || gl.getUniformLocation(program, 'u_motionThreshold') === -1) console.warn(`Uniform 'u_motionThreshold' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_trailPersistence'), this.trailPersistence);
+        if (gl.getUniformLocation(program, 'u_trailPersistence') === null || gl.getUniformLocation(program, 'u_trailPersistence') === -1) console.warn(`Uniform 'u_trailPersistence' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_hueShiftSpeed'), this.hueShiftSpeed);
+        if (gl.getUniformLocation(program, 'u_hueShiftSpeed') === null || gl.getUniformLocation(program, 'u_hueShiftSpeed') === -1) console.warn(`Uniform 'u_hueShiftSpeed' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_motionExtrapolation'), this.motionExtrapolation);
+        if (gl.getUniformLocation(program, 'u_motionExtrapolation') === null || gl.getUniformLocation(program, 'u_motionExtrapolation') === -1) console.warn(`Uniform 'u_motionExtrapolation' not found in program:`, program);
         gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), this.intensity); // General intensity
+        if (gl.getUniformLocation(program, 'u_intensity') === null || gl.getUniformLocation(program, 'u_intensity') === -1) console.warn(`Uniform 'u_intensity' not found in program:`, program);
 
         // Note: u_crossfader is part of base scene rendering, not a global effect uniform.
         // u_opacity for effect passes is 1.0, masterOpacity for final pass.
@@ -718,41 +738,60 @@ class VideoEngine {
         if (!controls) {
             // This effect might not have specific controls defined in this.effectControls
             // or it might be an older effect that doesn't use this structure.
+            // setGlobalUniforms already sets global uniforms like u_intensity if needed.
             return;
         }
 
-        if (effectName === 'datamosh') {
-            // Note: Datamosh shader uses 'u_intensity' for its own effect strength,
-            // which is different from the global 'u_intensity'.
-            // setGlobalUniforms already sets a global 'u_intensity'.
-            // If an effect shader declares 'u_intensity', this will override the global one for that shader.
-            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
-        } else if (effectName === 'crt') {
-            gl.uniform1f(gl.getUniformLocation(program, 'u_scanlineIntensity'), controls.scanlineIntensity);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_scanlineDensity'), controls.scanlineDensity);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_curvatureAmount'), controls.curvatureAmount);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_phosphorOffset'), controls.phosphorOffset);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteStrength'), controls.vignetteStrength);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_vignetteSoftness'), controls.vignetteSoftness);
-            // CRT also has 'u_intensity' in its GLSL spec, but it's not used in the provided code.
-            // If it were used, it would pick up the global 'u_intensity' from setGlobalUniforms.
-        } else if (effectName === 'pixelsort') {
-            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_threshold'), controls.threshold);
-        } else if (effectName === 'feedback') {
-            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement'), controls.displacement);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback'), controls.feedback);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_feedback_glowThreshold'), controls.feedback_glowThreshold);
-        } else if (effectName === 'feedbackDisplace') {
-            gl.uniform1f(gl.getUniformLocation(program, 'u_displacement_map_strength'), controls.displacement_map_strength);
-            gl.uniform1f(gl.getUniformLocation(program, 'u_intensity'), controls.intensity);
-            // This effect also uses global u_resolution, set by setGlobalUniforms
+        // Iterate through controls defined for this effect
+        for (const paramName in controls) {
+            if (controls.hasOwnProperty(paramName)) {
+                const uniformName = `u_${paramName}`; // Assuming uniform names match control names with 'u_' prefix
+                const value = controls[paramName];
+                const location = gl.getUniformLocation(program, uniformName);
+
+                if (location !== null && location !== -1) {
+                    // Set the uniform based on its type. Assuming float for now.
+                    // Need more robust type checking for different uniform types (vec2, vec3 etc.)
+                    if (typeof value === 'number') {
+                        gl.uniform1f(location, value);
+                    } else if (Array.isArray(value)) {
+                         // Add checks for vec2, vec3, etc. if needed
+                         if (value.length === 2) gl.uniform2fv(location, value);
+                         else if (value.length === 3) gl.uniform3fv(location, value);
+                         else if (value.length === 4) gl.uniform4fv(location, value);
+                    } // Add more types as needed
+                } else {
+                    console.warn(`Uniform '${uniformName}' not found in ${effectName} program.`);
+                }
+            }
         }
+
+        // Keep specific logic for datamosh if its 'u_intensity' conflicts with global 'u_intensity'
+        // However, the new structure assumes effect-specific controls override or use different names.
+        // If an effect *specifically* needs to use the global 'u_intensity' AND an effect-specific 'u_intensity',
+        // the shader itself would need to use different uniform names or this logic would need
+        // to handle that case (e.g., rename the effect-specific uniform to something like u_datamoshIntensity).
+        // Assuming for now that effect-specific controls share the same uniform name as the control name.
+        if (effectName === 'datamosh') {
+             // No extra logic needed here now if uniforms are named u_intensity, u_displacement, u_feedback.
+             // The loop above handles these if they exist in effectControls.datamosh.
+        } else if (effectName === 'crt') {
+             // No extra logic needed here now if uniforms are named u_scanlineIntensity etc.
+             // The loop above handles these if they exist in effectControls.crt.
+        } else if (effectName === 'pixelsort') {
+             // No extra logic needed here now.
+        } else if (effectName === 'feedback') {
+             // No extra logic needed here now.
+        } else if (effectName === 'feedbackDisplace') {
+            const intensityLoc = gl.getUniformLocation(program, 'u_intensity');
+            if (intensityLoc !== null && intensityLoc !== -1) gl.uniform1f(intensityLoc, controls.intensity);
+            else console.warn(`Uniform 'u_intensity' not found in ${effectName} program.`);
+            // Note: FeedbackDisplace uses 'u_intensity' from controls, which overrides the global u_intensity if set here.
+            // The loop above will set u_displacement_map_strength.
+        }
+
+        // Add checks for other effects here if they have complex uniform setting logic
+        // that isn't covered by the simple u_paramName mapping.
     }
 
     renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
@@ -805,109 +844,6 @@ class VideoEngine {
         // --- END OF PLACEHOLDER ---
     }
 
-    calculateBaseLayerOpacity(layer, layerIndex, audioData, beatData, time) {
-        let effectiveOpacity = layer.opacity; // Layer's own opacity slider
-        let crossfaderValue = this.crossfader; // Global crossfader (0 for A, 1 for B)
-
-        // Auto-sync crossfader (optional, based on beat)
-        if (this.autoSyncEnabled && beatData && beatData.beat > 0.8 && audioData) {
-            crossfaderValue = Math.abs(Math.sin(time * 0.5 + audioData.energy));
-        }
-
-        const crossfaderSmooth = this.smoothstep(0, 1, crossfaderValue);
-
-        // Layers 0,1,2 are Group A; Layers 3,4,5 are Group B
-        if (layerIndex < 3) { // Group A
-            effectiveOpacity *= Math.pow(1.0 - crossfaderSmooth, 1.5); // Fade out as crossfader moves to B
-        } else { // Group B
-            effectiveOpacity *= Math.pow(crossfaderSmooth, 1.5);       // Fade in as crossfader moves to B
-        }
-        
-        // Audio-reactive opacity boost (applied before global effects and master opacity)
-        if (audioData && audioData.energy > 0.6) {
-            effectiveOpacity = Math.min(1.0, effectiveOpacity * (1.0 + audioData.energy * 0.3));
-        }
-
-        return Math.max(0, Math.min(1, effectiveOpacity)); // Clamp final opacity
-    }
-    
-    // This is the new full implementation for rendering base scene to FBO
-    renderBaseSceneToFBO(targetFbo, budget, audioData, beatData, time) {
-        const gl = this.gl;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, targetFbo);
-        gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-        gl.clearColor(0, 0, 0, 0); // Clear with transparent black for proper blending
-        gl.clear(gl.COLOR_BUFFER_BIT);
-
-        const passthroughProgram = this.effectPrograms.passthrough;
-        if (!passthroughProgram) {
-            console.error("Passthrough program not found for renderBaseSceneToFBO");
-            return;
-        }
-        gl.useProgram(passthroughProgram);
-        this.setGlobalUniforms(passthroughProgram, time, audioData, beatData); // Set time, resolution, audio uniforms
-
-        let activeLayerCount = 0;
-        const maxLayersToRender = budget.maxActiveLayers || this.layers.length;
-
-
-        // Correct layer sorting for blending: typically draw back-to-front, or by explicit layer index.
-        // For typical alpha blending (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), order matters.
-        // Additive might be order-independent.
-        // For now, we'll iterate based on layer index, assuming layers are stacked 0 on bottom, 5 on top.
-        const layersToProcess = this.layers
-            .map((layer, index) => ({ layer, index }))
-            .filter(({ layer }) => layer.video && layer.opacity > 0.001 && layer.video.readyState >= layer.video.HAVE_CURRENT_DATA)
-            .slice(0, maxLayersToRender); // Respect budget for active layers
-
-        gl.enable(gl.BLEND);
-
-        layersToProcess.forEach(({ layer, index }) => {
-            activeLayerCount++;
-            layer.isActive = true; // Mark layer as active for this frame
-
-            if (budget.canUpdateAllTextures || activeLayerCount <= 2) { // Or some other heuristic for texture updates
-                const updateRate = this.getOptimizedTextureUpdateRate();
-                if (this.shouldUpdateTexture(layer, updateRate)) {
-                    this.updateLayerTexture(layer);
-                }
-            }
-
-            if (!layer.texture) {
-                layer.isActive = false;
-                return; // Skip if no texture
-            }
-
-            const baseLayerOpacity = this.calculateBaseLayerOpacity(layer, index, audioData, beatData, time);
-
-            if (baseLayerOpacity <= 0.001) { // Threshold to avoid drawing nearly invisible layers
-                layer.isActive = false;
-                return;
-            }
-
-            this.setBlendMode(gl, layer.blendMode); // Set blend mode for this layer
-
-            gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, layer.texture);
-            const sourceTexLoc = gl.getUniformLocation(passthroughProgram, 'u_sourceTexture');
-            if (sourceTexLoc) gl.uniform1i(sourceTexLoc, 0);
-            gl.uniform1f(gl.getUniformLocation(passthroughProgram, 'u_opacity'), baseLayerOpacity);
-
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        });
-        
-        // Reset isActive for layers not processed (if any were skipped by slice or other conditions)
-        this.layers.forEach((layerObj, idx) => {
-            if (!layersToProcess.find(p => p.index === idx)) {
-                layerObj.isActive = false;
-            }
-        });
-
-        gl.disable(gl.BLEND);
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null); // Unbind FBO
-    }
-
-
     // setUniformsOptimized(time, audioData, beatData) { // Obsolete: Replaced by setGlobalUniforms used per program.
     //     const currentProgram = this.gl.getParameter(this.gl.CURRENT_PROGRAM);
     //     if (!currentProgram) return;
@@ -943,6 +879,9 @@ class VideoEngine {
     }
     
     setBlendMode(gl, blendMode) {
+        // Note: Accurate implementations of 'subtract' and 'multiply' blend modes may require
+        // shader-based blending due to limitations of WebGL 1.0 fixed-function blending.
+        // The current implementation uses approximations.
         // Ensure blend equation is ADD, which is the default for WebGL
         gl.blendEquation(gl.FUNC_ADD);
 
@@ -1118,6 +1057,26 @@ class VideoEngine {
         if (this.shaderManager) {
             this.shaderManager.dispose();
         }
+
+        // Delete ping-pong FBOs and textures
+        if (this.fboA) this.gl.deleteFramebuffer(this.fboA);
+        if (this.texA) this.gl.deleteTexture(this.texA);
+        if (this.fboB) this.gl.deleteFramebuffer(this.fboB);
+        if (this.texB) this.gl.deleteTexture(this.texB);
+
+        // Delete feedback FBO and texture
+        if (this.fboPrevFrame) this.gl.deleteFramebuffer(this.fboPrevFrame);
+        if (this.texPrevFrame) this.gl.deleteTexture(this.texPrevFrame);
+
+        // Delete vertex buffer
+        if (this.vertexBuffer) {
+            this.gl.deleteBuffer(this.vertexBuffer);
+            this.vertexBuffer = null; // Release reference
+        }
+
+        // Clear GL context and other references
+        this.gl = null;
+        this.canvas = null;
     }
 }
 

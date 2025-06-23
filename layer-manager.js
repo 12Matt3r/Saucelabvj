@@ -9,6 +9,11 @@ class LayerManager {
     init() {
         // Create layer controls
         const layersContainer = document.getElementById('layers-container');
+
+        if (!layersContainer) {
+            console.error('Layers container element not found.');
+            return; // Prevent further errors if the container is missing
+        }
         
         for (let i = 0; i < this.maxLayers; i++) {
             const layer = this.createLayerControl(i);
@@ -73,7 +78,11 @@ class LayerManager {
     
     async setLayerVideo(layerIndex, file) {
         const layer = this.layers[layerIndex];
+        if (!layer) return; // Check if layer exists
+
         const preview = layer.element.querySelector('.layer-preview');
+        if (!preview) return; // Check if preview element exists
+
         
         // Show loading state
         preview.innerHTML = '<div class="loading">Loading...</div>';
@@ -109,7 +118,9 @@ class LayerManager {
             preview.appendChild(fileName);
             
             // Add to video engine
-            this.videoEngine.setLayerVideo(layerIndex, video);
+ if (this.videoEngine) {
+ this.videoEngine.setLayerVideo(layerIndex, video);
+ }
             
             console.log(`Video loaded for layer ${layerIndex}: ${file.name}`);
             
@@ -122,11 +133,16 @@ class LayerManager {
     }
     
     setLayerOpacity(layerIndex, opacity) {
+        if (!this.layers[layerIndex]) return; // Check if layer exists
         this.layers[layerIndex].opacity = opacity;
-        this.videoEngine.setLayerOpacity(layerIndex, opacity);
+ if (this.videoEngine) {
+ this.videoEngine.setLayerOpacity(layerIndex, opacity);
+ }
         
         // Update UI
         const opacityValue = this.layers[layerIndex].element.querySelector('.opacity-value');
+        if (!opacityValue) return; // Check if opacity value element exists
+
         opacityValue.textContent = Math.round(opacity * 100) + '%';
         
         // Enhanced visual feedback
@@ -140,10 +156,16 @@ class LayerManager {
     }
     
     setLayerBlendMode(layerIndex, blendMode) {
+        if (!this.layers[layerIndex]) return; // Check if layer exists
         this.layers[layerIndex].blendMode = blendMode;
-        this.videoEngine.setLayerBlendMode(layerIndex, blendMode);
+ if (this.videoEngine) {
+ this.videoEngine.setLayerBlendMode(layerIndex, blendMode);
+ }
     }
     
+    /**
+     * Sets the active layer.
+     */
     setActiveLayer(layerIndex) {
         // Remove active class from all layers
         this.layers.forEach(layer => layer.element.classList.remove('active'));
@@ -154,6 +176,7 @@ class LayerManager {
     }
     
     soloLayer(layerIndex) {
+        if (!this.layers[layerIndex]) return; // Check if target layer exists
         const targetLayer = this.layers[layerIndex];
         const wasSolo = targetLayer.solo;
         
@@ -173,6 +196,7 @@ class LayerManager {
             
             // Update UI
             const soloBtn = layer.element.querySelector('.layer-solo-btn');
+            if (soloBtn) { // Check if solo button element exists
             soloBtn.classList.toggle('active', layer.solo);
         });
     }
@@ -180,6 +204,7 @@ class LayerManager {
     animateOpacity(layerIndex, targetOpacity, duration = 1000) {
         const layer = this.layers[layerIndex];
         const startOpacity = layer.opacity;
+        if (!layer) return; // Check if layer exists
         const startTime = performance.now();
         
         const animate = (currentTime) => {
@@ -194,6 +219,8 @@ class LayerManager {
             
             // Update slider
             const slider = layer.element.querySelector('.opacity-slider');
+            if (!slider) return; // Check if slider element exists
+
             slider.value = currentOpacity;
             
             if (progress < 1) {
@@ -205,6 +232,7 @@ class LayerManager {
     }
     
     triggerHotCue(layerIndex, cueIndex) {
+        if (!this.layers[layerIndex]) return; // Check if layer exists
         const layer = this.layers[layerIndex];
         if (layer.video && layer.hotCues[cueIndex] !== undefined) {
             layer.video.currentTime = layer.hotCues[cueIndex];
@@ -217,6 +245,7 @@ class LayerManager {
     
     reset() {
         // Stop all videos
+        if (!this.layers) return; // Check if layers array exists
         this.layers.forEach(layer => {
             if (layer.video) {
                 layer.video.pause();
